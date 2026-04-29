@@ -1,2 +1,9 @@
 
 backend/app/config/.env
+CLAUDE.md
+backend/app/core/__pycache__/__init__.cpython-314.pyc
+backend/app/core/__pycache__/config.cpython-314.pyc
+backend/app/llm/__pycache__/__init__.cpython-314.pyc
+backend/app/llm/__pycache__/client.cpython-314.pyc
+docs/doc.md
+AGENTS.md
