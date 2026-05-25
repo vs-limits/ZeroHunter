@@ -1,0 +1,100 @@
+"""JavaScript / Node.js — SSRF sinks (CWE-918)."""
+
+from app.scanner.sink.types import SinkRule
+
+VULNERABILITY = "ssrf"
+
+_JS = [".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"]
+
+RULES = [
+    SinkRule(
+        id="js-ssrf-fetch",
+        function="fetch(url)",
+        call_regex=r"\bfetch\s*\(",
+        description="WHATWG fetch with dynamic URL.",
+        argument_roles=["resource", "init"],
+        extensions=_JS,
+        severity="high",
+        require_dynamic=True,
+    ),
+    SinkRule(
+        id="js-ssrf-axios",
+        function="axios(...) / axios.get/post",
+        call_regex=r"\baxios\s*(?:\.\s*(?:get|post|put|patch|delete|request|head|options))?\s*\(",
+        description="axios outbound request with dynamic URL/config.",
+        argument_roles=["config|url"],
+        extensions=_JS,
+        severity="high",
+        require_dynamic=True,
+    ),
+    SinkRule(
+        id="js-ssrf-got",
+        function="got / got.stream",
+        call_regex=r"\bgot(?:\s*\.\s*(?:get|post|put|delete|stream|head))?\s*\(",
+        description="got HTTP client with dynamic URL.",
+        argument_roles=["url"],
+        extensions=_JS,
+        severity="high",
+        require_dynamic=True,
+    ),
+    SinkRule(
+        id="js-ssrf-node-http-request",
+        function="http.request / https.request / .get",
+        call_regex=r"\b(?:http|https)\s*\.\s*(?:request|get)\s*\(",
+        description="Node http(s) request with dynamic options.",
+        argument_roles=["options", "callback"],
+        extensions=_JS,
+        severity="high",
+        require_dynamic=True,
+    ),
+    SinkRule(
+        id="js-ssrf-request-legacy",
+        function="request(url)",
+        call_regex=r"\brequest\s*\(\s*[^)]+\)",
+        description="Legacy `request` package with dynamic URL.",
+        argument_roles=["uri", "options"],
+        extensions=_JS,
+        severity="medium",
+        require_dynamic=True,
+    ),
+    SinkRule(
+        id="js-ssrf-needle",
+        function="needle.get/post",
+        call_regex=r"\bneedle\s*\.\s*(?:get|post|put|delete|request|head)\s*\(",
+        description="needle HTTP client with dynamic URL.",
+        argument_roles=["url"],
+        extensions=_JS,
+        severity="medium",
+        require_dynamic=True,
+    ),
+    SinkRule(
+        id="js-ssrf-superagent",
+        function="superagent.get/post",
+        call_regex=r"\bsuperagent\s*(?:\.\s*(?:get|post|put|delete|head))?\s*\(",
+        description="superagent HTTP client with dynamic URL.",
+        argument_roles=["url"],
+        extensions=_JS,
+        severity="medium",
+        require_dynamic=True,
+    ),
+    SinkRule(
+        id="js-ssrf-puppeteer-goto",
+        function="page.goto(url)",
+        call_regex=r"\.\s*goto\s*\(",
+        description="Puppeteer/Playwright page.goto fetches arbitrary URL with a real browser.",
+        argument_roles=["url"],
+        extensions=_JS,
+        severity="high",
+        require_dynamic=True,
+    ),
+    SinkRule(
+        id="js-ssrf-net-socket-connect",
+        function="net.Socket.connect",
+        call_regex=r"\.\s*connect\s*\(\s*\{?[^)]*(?:host|port)",
+        description="Raw TCP connect with dynamic host/port.",
+        argument_roles=["options"],
+        extensions=_JS,
+        severity="medium",
+        require_dynamic=True,
+    ),
+]

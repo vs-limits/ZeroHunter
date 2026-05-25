@@ -1,0 +1,1 @@
+"""Rust sink rules."""

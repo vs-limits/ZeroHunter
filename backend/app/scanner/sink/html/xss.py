@@ -1,0 +1,168 @@
+"""HTML / template — XSS sinks.
+
+These are template-level patterns that may render unescaped user data
+in the final HTML page.
+"""
+
+from app.scanner.sink.types import SinkRule
+
+VULNERABILITY = "xss"
+
+_HTML = [".html", ".htm", ".xhtml", ".vue", ".svelte"]
+_TPL = [".html", ".htm", ".jinja", ".jinja2", ".j2", ".tpl", ".tmpl", ".ejs", ".hbs", ".mustache", ".tera", ".twig", ".liquid", ".njk", ".nunjucks"]
+
+RULES = [
+    SinkRule(
+        id="html-xss-inline-event",
+        function="onclick / onerror / onload / onmouseover etc.",
+        call_regex=r"\son(?:click|error|load|mouseover|mouseout|keypress|keydown|keyup|focus|blur|submit|change|input|toggle|paste|copy|cut|drop|drag|wheel|scroll|abort|unload)\s*=\s*[\"']",
+        description="Inline event handler — XSS sink when value is templated from user input.",
+        argument_roles=["handler"],
+        extensions=_HTML + _TPL,
+        severity="high",
+    ),
+    SinkRule(
+        id="html-xss-javascript-href",
+        function="href=\"javascript:...\"",
+        call_regex=r"\bhref\s*=\s*[\"']\s*javascript\s*:",
+        description="javascript: URL scheme in href.",
+        argument_roles=["href"],
+        extensions=_HTML + _TPL,
+        severity="critical",
+    ),
+    SinkRule(
+        id="html-xss-data-url",
+        function="src/href = \"data:text/html,...\"",
+        call_regex=r"\b(?:href|src)\s*=\s*[\"']\s*data\s*:\s*text/html",
+        description="data:text/html URL renders attacker-controlled HTML.",
+        argument_roles=[],
+        extensions=_HTML + _TPL,
+        severity="high",
+    ),
+    SinkRule(
+        id="html-xss-srcdoc-dynamic",
+        function="<iframe srcdoc=\"${userInput}\">",
+        call_regex=r"\bsrcdoc\s*=\s*[\"']",
+        description="iframe srcdoc renders inline HTML — must be sanitised.",
+        argument_roles=["srcdoc"],
+        extensions=_HTML + _TPL,
+        severity="high",
+    ),
+    SinkRule(
+        id="html-xss-jinja-no-autoescape",
+        function="{% autoescape false %}",
+        call_regex=r"\{%\s*autoescape\s+(?:false|off)\s*%\}",
+        description="Jinja2/Django block disabling auto-escape.",
+        argument_roles=[],
+        extensions=_TPL,
+        severity="high",
+    ),
+    SinkRule(
+        id="html-xss-django-safe",
+        function="{{ value|safe }}",
+        call_regex=r"\|\s*safe\b",
+        description="Django/Jinja2 |safe filter outputs raw HTML.",
+        argument_roles=[],
+        extensions=_TPL,
+        severity="high",
+    ),
+    SinkRule(
+        id="html-xss-jinja-autoescape-tag",
+        function="{% autoescape false %}",
+        call_regex=r"\{%-?\s*autoescape\s+(?:false|0|None)\s*-?%\}",
+        description="Jinja autoescape disabled in block.",
+        argument_roles=[],
+        extensions=_TPL,
+        severity="high",
+    ),
+    SinkRule(
+        id="html-xss-mustache-triple",
+        function="{{{ value }}}",
+        call_regex=r"\{\{\{[^}]+\}\}\}",
+        description="Mustache/Handlebars triple-stache prints raw HTML.",
+        argument_roles=[],
+        extensions=_TPL,
+        severity="high",
+    ),
+    SinkRule(
+        id="html-xss-blade-unescaped",
+        function="{!! $... !!}",
+        call_regex=r"\{!!\s*\$",
+        description="Laravel Blade unescaped echo prints raw HTML.",
+        argument_roles=[],
+        extensions=[".blade.php", ".php"],
+        severity="high",
+    ),
+    SinkRule(
+        id="html-xss-twig-raw-filter",
+        function="{{ value|raw }}",
+        call_regex=r"\|\s*raw\b",
+        description="Twig |raw filter disables escaping.",
+        argument_roles=[],
+        extensions=[".twig"],
+        severity="high",
+    ),
+    SinkRule(
+        id="html-xss-ejs-unescaped",
+        function="<%- value %>",
+        call_regex=r"<%-\s*",
+        description="EJS <%- ... %> outputs unescaped value.",
+        argument_roles=[],
+        extensions=[".ejs"],
+        severity="high",
+    ),
+    SinkRule(
+        id="html-xss-thymeleaf-utext",
+        function="th:utext=\"${expr}\"",
+        call_regex=r"\bth:utext\s*=",
+        description="Thymeleaf th:utext outputs unescaped expression.",
+        argument_roles=[],
+        extensions=_HTML,
+        severity="high",
+    ),
+    SinkRule(
+        id="html-xss-angular-bypass",
+        function="[innerHTML]=\"value\"",
+        call_regex=r"\[\s*innerHTML\s*\]\s*=",
+        description="Angular [innerHTML] binding (combined with sanitizer bypass).",
+        argument_roles=[],
+        extensions=_HTML,
+        severity="high",
+    ),
+    SinkRule(
+        id="html-xss-vue-v-html",
+        function="v-html=\"value\"",
+        call_regex=r"\bv-html\s*=",
+        description="Vue v-html renders raw HTML expression.",
+        argument_roles=[],
+        extensions=_HTML + [".vue"],
+        severity="critical",
+    ),
+    SinkRule(
+        id="html-xss-svelte-html-tag",
+        function="{@html value}",
+        call_regex=r"\{@html\b",
+        description="Svelte {@html ...} bypasses escaping.",
+        argument_roles=[],
+        extensions=[".svelte"],
+        severity="critical",
+    ),
+    SinkRule(
+        id="html-xss-meta-refresh-userdata",
+        function="<meta http-equiv=refresh content=\"0;url=${userInput}\">",
+        call_regex=r"<meta\s+http-equiv\s*=\s*[\"']refresh[\"']",
+        description="meta refresh URL constructed from user input enables open redirect / XSS.",
+        argument_roles=[],
+        extensions=_HTML + _TPL,
+        severity="medium",
+    ),
+    SinkRule(
+        id="html-xss-inline-script-userdata",
+        function="<script>var x = '${userInput}';</script>",
+        call_regex=r"<script\b[^>]*>[\s\S]*?\$\{",
+        description="Inline <script> with template interpolation = stored XSS / RCE-in-client.",
+        argument_roles=[],
+        extensions=_HTML + _TPL,
+        severity="critical",
+    ),
+]

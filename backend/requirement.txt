@@ -1,0 +1,7 @@
+litellm
+botocore
+mcp>=1.27,<2
+python-dotenv
+rich
+fastapi>=0.110
+uvicorn[standard]>=0.27

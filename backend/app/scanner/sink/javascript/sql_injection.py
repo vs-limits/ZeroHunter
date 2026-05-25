@@ -1,0 +1,105 @@
+"""JavaScript / Node.js — SQL Injection sinks (CWE-89)."""
+
+from app.scanner.sink.types import SinkRule
+
+VULNERABILITY = "sql_injection"
+
+_JS = [".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"]
+
+RULES = [
+    SinkRule(
+        id="js-sql-mysql-query",
+        function="mysql / mysql2 connection.query",
+        call_regex=r"\.\s*query\s*\(",
+        description="mysql/mysql2 connection.query with template literal / + concatenation.",
+        argument_roles=["sql", "values"],
+        extensions=_JS,
+        severity="high",
+        require_dynamic=True,
+    ),
+    SinkRule(
+        id="js-sql-mysql-execute",
+        function="mysql2 connection.execute",
+        call_regex=r"\.\s*execute\s*\(",
+        description="mysql2.execute with f-string-like template; still injectable when concatenated.",
+        argument_roles=["sql", "values"],
+        extensions=_JS,
+        severity="medium",
+        require_dynamic=True,
+    ),
+    SinkRule(
+        id="js-sql-pg-query",
+        function="pg Client.query",
+        call_regex=r"\.\s*query\s*\(\s*`[^`]*\$\{",
+        description="node-postgres query with template literal interpolation.",
+        argument_roles=["text", "values"],
+        extensions=_JS,
+        severity="high",
+    ),
+    SinkRule(
+        id="js-sql-sqlite3-run",
+        function="sqlite3 db.run / all / exec",
+        call_regex=r"\.\s*(?:run|exec|all|get|prepare)\s*\(",
+        description="sqlite3 method with concatenated SQL.",
+        argument_roles=["sql"],
+        extensions=_JS,
+        severity="medium",
+        require_dynamic=True,
+    ),
+    SinkRule(
+        id="js-sql-sequelize-query",
+        function="sequelize.query",
+        call_regex=r"\bsequelize\s*\.\s*query\s*\(",
+        description="Sequelize raw query with caller string.",
+        argument_roles=["sql", "options"],
+        extensions=_JS,
+        severity="high",
+        require_dynamic=True,
+    ),
+    SinkRule(
+        id="js-sql-knex-raw",
+        function="knex.raw",
+        call_regex=r"\bknex\s*\.\s*raw\s*\(",
+        description="knex.raw() with template literal is injectable.",
+        argument_roles=["sql"],
+        extensions=_JS,
+        severity="high",
+        require_dynamic=True,
+    ),
+    SinkRule(
+        id="js-sql-typeorm-query",
+        function="DataSource.query / EntityManager.query",
+        call_regex=r"\.\s*query\s*\(\s*`",
+        description="TypeORM raw query with template literal.",
+        argument_roles=["query", "parameters"],
+        extensions=_JS,
+        severity="high",
+    ),
+    SinkRule(
+        id="js-sql-prisma-execute-raw",
+        function="prisma.$executeRawUnsafe / $queryRawUnsafe",
+        call_regex=r"\$\s*(?:executeRawUnsafe|queryRawUnsafe)\s*\(",
+        description="Prisma *Unsafe variants accept raw SQL strings.",
+        argument_roles=["sql", "values"],
+        extensions=_JS,
+        severity="critical",
+    ),
+    SinkRule(
+        id="js-sql-mssql-request-query",
+        function="mssql Request.query",
+        call_regex=r"\.\s*query\s*\(\s*`",
+        description="node-mssql request.query with template literal.",
+        argument_roles=["command"],
+        extensions=_JS,
+        severity="high",
+    ),
+    SinkRule(
+        id="js-sql-oracledb-execute",
+        function="oracledb connection.execute",
+        call_regex=r"\.\s*execute\s*\(\s*`[^`]*\$\{",
+        description="node-oracledb execute with template literal interpolation.",
+        argument_roles=["sql", "binds"],
+        extensions=_JS,
+        severity="high",
+    ),
+]

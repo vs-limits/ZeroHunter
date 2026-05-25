@@ -1,0 +1,1 @@
+"""Python sink rules."""

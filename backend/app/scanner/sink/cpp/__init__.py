@@ -1,0 +1,1 @@
+"""C++ sink rules."""

@@ -1,0 +1,1 @@
+"""Go sink rules."""
