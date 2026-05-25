@@ -1,9 +1,53 @@
+# DefectMine local repositories and scan artifacts
+repo_code/
+**/.defectmine/
 
+# Local tool/cache data
+.tldr/cache/
+ripgrep/
+
+# Secrets and local environment files
+.env
+.env.*
+!.env.example
 backend/app/config/.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.python-version
+.venv/
+venv/
+env/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage/
+htmlcov/
+
+# Node / frontend
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+*.tsbuildinfo
+
+# Logs and runtime output
+*.log
+backend-api.out.log
+backend-api.err.log
+frontend-dev.out.log
+frontend-dev.err.log
+
+# IDE / editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local assistant/project notes
 CLAUDE.md
-backend/app/core/__pycache__/__init__.cpython-314.pyc
-backend/app/core/__pycache__/config.cpython-314.pyc
-backend/app/llm/__pycache__/__init__.cpython-314.pyc
-backend/app/llm/__pycache__/client.cpython-314.pyc
-docs/doc.md
 AGENTS.md
+docs/doc.md
