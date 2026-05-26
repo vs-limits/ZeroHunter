@@ -18,6 +18,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.callscan import create_audit_batch, list_audit_batches, load_priority_chain_jsonl
+
 
 WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
 BACKEND_DIR = WORKSPACE_ROOT / "backend"
@@ -38,6 +40,11 @@ CORE_ARTIFACTS = {
     "scanner_agent.json",
     "callscan_agent.json",
     "callscan_chains.priority.jsonl",
+    "callscan_chains.all.jsonl",
+    "callscan_chains.partial.jsonl",
+    "callscan_coverage.json",
+    "callscan_discovery.meta.json",
+    "audit_completed_pool.jsonl",
     "audit_agent.json",
     "audit_findings.md",
 }
@@ -61,6 +68,8 @@ class CreateScanRequest(BaseModel):
     step: str = "all"
     audit_limit: int | None = None
     priority_chain_limit: int | None = None
+    audit_per_type: int | None = None
+    vulnerability_types: str | None = None
     audit_dry_run: bool = False
 
 
@@ -69,6 +78,8 @@ class UpdateScanRequest(BaseModel):
     step: str | None = None
     audit_limit: int | None = None
     priority_chain_limit: int | None = None
+    audit_per_type: int | None = None
+    vulnerability_types: str | None = None
     audit_dry_run: bool | None = None
 
 
@@ -77,7 +88,33 @@ class StartScanRequest(BaseModel):
     step: str | None = None
     audit_limit: int | None = None
     priority_chain_limit: int | None = None
+    audit_per_type: int | None = None
+    vulnerability_types: str | None = None
+    force_discover: bool | None = None
     audit_dry_run: bool | None = None
+
+
+class CreateBatchRequest(BaseModel):
+    project_path: str = Field(..., min_length=1)
+    name: str | None = None
+    audit_limit: int = 20
+    audit_per_type: int = 1
+    vulnerability_types: str | None = None
+    # 工作台主流程使用手动勾选的候选链创建批次；旧的 limit/per_type 调度参数保留给 CLI 和兼容调用。
+    selected_chain_ids: list[str] = Field(default_factory=list)
+    exclude_completed: bool = True
+
+
+class StartBatchRequest(BaseModel):
+    project_path: str = Field(..., min_length=1)
+    audit_limit: int | None = None
+    audit_dry_run: bool | None = None
+
+
+class DiscoverRequest(BaseModel):
+    project_path: str = Field(..., min_length=1)
+    priority_chain_limit: int | None = None
+    force_discover: bool = False
 
 
 class ImportProjectRequest(BaseModel):
@@ -171,6 +208,8 @@ def create_scan(req: CreateScanRequest) -> dict[str, Any]:
         "last_run_id": None,
         "audit_limit": req.audit_limit,
         "priority_chain_limit": req.priority_chain_limit,
+        "audit_per_type": req.audit_per_type or 1,
+        "vulnerability_types": req.vulnerability_types or "",
         "audit_dry_run": req.audit_dry_run,
     }
     _write_scan(root, scan)
@@ -219,14 +258,17 @@ def start_scan(scan_id: str, req: StartScanRequest) -> dict[str, Any]:
         raise HTTPException(status_code=409, detail="Scan is already running")
 
     # 启动前先计算并固化本次有效参数，避免前端输入 50 但后端仍使用旧 scan 默认值 20。
-    for key in ("step", "audit_limit", "priority_chain_limit", "audit_dry_run"):
+    for key in ("step", "audit_limit", "priority_chain_limit", "audit_per_type", "vulnerability_types", "audit_dry_run"):
         value = getattr(req, key)
         if value is not None:
             scan[key] = value
     effective_priority_chain_limit = _positive_int_or_none(scan.get("priority_chain_limit"))
     effective_audit_limit = _positive_int_or_none(scan.get("audit_limit"))
+    effective_audit_per_type = _positive_int_or_default(scan.get("audit_per_type"), 1)
     scan["priority_chain_limit"] = effective_priority_chain_limit
     scan["audit_limit"] = effective_audit_limit
+    scan["audit_per_type"] = effective_audit_per_type
+    scan["vulnerability_types"] = str(scan.get("vulnerability_types") or "")
     scan["audit_dry_run"] = bool(scan.get("audit_dry_run", False))
 
     run_id = f"run-{uuid.uuid4().hex[:12]}"
@@ -242,11 +284,17 @@ def start_scan(scan_id: str, req: StartScanRequest) -> dict[str, Any]:
         _relative_project_path(root),
         "--artifacts-dir",
         str(artifacts_dir),
+        "--batch-audit",
     ]
     if effective_priority_chain_limit is not None:
         cmd.extend(["--priority-chain-limit", str(effective_priority_chain_limit)])
     if effective_audit_limit is not None:
         cmd.extend(["--audit-limit", str(effective_audit_limit)])
+    cmd.extend(["--audit-per-type", str(effective_audit_per_type)])
+    if scan.get("vulnerability_types"):
+        cmd.extend(["--audit-vuln-types", str(scan.get("vulnerability_types"))])
+    if req.force_discover:
+        cmd.append("--force-discover")
     if scan.get("audit_dry_run"):
         cmd.append("--audit-dry-run")
 
@@ -301,8 +349,164 @@ def start_scan(scan_id: str, req: StartScanRequest) -> dict[str, Any]:
         "cmd": cmd,
         "priority_chain_limit": effective_priority_chain_limit,
         "audit_limit": effective_audit_limit,
+        "audit_per_type": effective_audit_per_type,
         "audit_dry_run": bool(scan.get("audit_dry_run")),
     }
+
+
+@app.post("/api/scans/{scan_id}/discover")
+def discover_scan(scan_id: str, req: DiscoverRequest) -> dict[str, Any]:
+    root = _resolve_project_root(req.project_path)
+    scan = _require_scan(root, scan_id)
+    if _running_for_scan(scan_id):
+        raise HTTPException(status_code=409, detail="Scan is already running")
+    priority_limit = _positive_int_or_none(req.priority_chain_limit) or _positive_int_or_none(scan.get("priority_chain_limit")) or 20
+    cmd_extra = ["--discover", "--priority-chain-limit", str(priority_limit)]
+    if req.force_discover:
+        cmd_extra.append("--force-discover")
+    return _spawn_scan_command(
+        root=root,
+        scan=scan,
+        scan_id=scan_id,
+        cmd_extra=cmd_extra,
+        priority_chain_limit=priority_limit,
+        audit_limit=None,
+        audit_dry_run=False,
+    )
+
+
+@app.post("/api/scans/{scan_id}/batches")
+def create_scan_batch(scan_id: str, req: CreateBatchRequest) -> dict[str, Any]:
+    root = _resolve_project_root(req.project_path)
+    _require_scan(root, scan_id)
+    artifacts_dir = _scan_artifacts_dir(root, scan_id)
+    try:
+        batch = create_audit_batch(
+            artifacts_dir,
+            limit=req.audit_limit,
+            per_type=req.audit_per_type,
+            vulnerability_types=_csv_values(req.vulnerability_types or ""),
+            selected_chain_ids=req.selected_chain_ids,
+            exclude_completed=req.exclude_completed,
+            name=req.name,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return batch
+
+
+@app.get("/api/scans/{scan_id}/batches")
+def list_scan_batches(scan_id: str, project_path: str = Query(...)) -> dict[str, Any]:
+    root = _resolve_project_root(project_path)
+    _require_scan(root, scan_id)
+    return {"items": list_audit_batches(_scan_artifacts_dir(root, scan_id))}
+
+
+@app.get("/api/scans/{scan_id}/candidates")
+def list_scan_candidates(
+    scan_id: str,
+    project_path: str = Query(...),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=500),
+    keyword: str | None = Query(None),
+    vulnerability_type: str | None = Query(None),
+    severity: str | None = Query(None),
+) -> dict[str, Any]:
+    root = _resolve_project_root(project_path)
+    _require_scan(root, scan_id)
+    artifacts_dir = _scan_artifacts_dir(root, scan_id)
+    candidates, source = _load_candidate_pool_for_api(artifacts_dir)
+    completed = _completed_pool_index(artifacts_dir)
+    batches = _batch_membership_index(artifacts_dir)
+    items = [_normalize_candidate_item(item, completed, batches) for item in candidates]
+    facets = _candidate_facets(items)
+    if vulnerability_type:
+        wanted = vulnerability_type.lower()
+        items = [item for item in items if str(item.get("vulnerability_type", "")).lower() == wanted]
+    if severity:
+        wanted = severity.lower()
+        items = [item for item in items if str(item.get("severity", "")).lower() == wanted]
+    if keyword:
+        needle = keyword.lower()
+        items = [item for item in items if needle in json.dumps(item, ensure_ascii=False).lower()]
+    return {
+        "source": source,
+        "has_full_pool": (artifacts_dir / "callscan_chains.all.jsonl").is_file(),
+        "has_legacy_priority": (artifacts_dir / "callscan_chains.priority.jsonl").is_file(),
+        "offset": offset,
+        "limit": limit,
+        "total": len(items),
+        "facets": facets,
+        "items": items[offset : offset + limit],
+    }
+
+
+@app.get("/api/scans/{scan_id}/batches/{batch_id}")
+def get_scan_batch(scan_id: str, batch_id: str, project_path: str = Query(...)) -> dict[str, Any]:
+    root = _resolve_project_root(project_path)
+    _require_scan(root, scan_id)
+    meta = _maybe_read_json(_scan_artifacts_dir(root, scan_id) / "audit_batches" / batch_id / "batch_meta.json")
+    if not isinstance(meta, dict) or not meta:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    return meta
+
+
+@app.post("/api/scans/{scan_id}/batches/{batch_id}/start")
+def start_scan_batch(scan_id: str, batch_id: str, req: StartBatchRequest) -> dict[str, Any]:
+    root = _resolve_project_root(req.project_path)
+    scan = _require_scan(root, scan_id)
+    if _running_for_scan(scan_id):
+        raise HTTPException(status_code=409, detail="Scan is already running")
+    batch_dir = _scan_artifacts_dir(root, scan_id) / "audit_batches" / batch_id
+    if not (batch_dir / "queue.jsonl").is_file():
+        raise HTTPException(status_code=404, detail="Batch queue not found")
+    audit_limit = _positive_int_or_none(req.audit_limit)
+    cmd_extra = ["--audit-batch", batch_id]
+    if audit_limit is not None:
+        cmd_extra.extend(["--audit-limit", str(audit_limit)])
+    if req.audit_dry_run:
+        cmd_extra.append("--audit-dry-run")
+    return _spawn_scan_command(
+        root=root,
+        scan=scan,
+        scan_id=scan_id,
+        cmd_extra=cmd_extra,
+        log_path=batch_dir / CONSOLE_FILENAME,
+        priority_chain_limit=None,
+        audit_limit=audit_limit,
+        audit_dry_run=bool(req.audit_dry_run),
+    )
+
+
+@app.get("/api/scans/{scan_id}/coverage")
+def read_scan_coverage(scan_id: str, project_path: str = Query(...)) -> dict[str, Any]:
+    root = _resolve_project_root(project_path)
+    _require_scan(root, scan_id)
+    path = _scan_artifacts_dir(root, scan_id) / "callscan_coverage.json"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Coverage artifact not found")
+    return {"path": str(path), "data": _read_json(path)}
+
+
+@app.get("/api/scans/{scan_id}/completed-pool")
+def read_completed_pool(scan_id: str, project_path: str = Query(...), offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=500)) -> dict[str, Any]:
+    root = _resolve_project_root(project_path)
+    _require_scan(root, scan_id)
+    path = _scan_artifacts_dir(root, scan_id) / "audit_completed_pool.jsonl"
+    if not path.is_file():
+        return {"path": str(path), "offset": offset, "limit": limit, "total": 0, "items": []}
+    lines = [line for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip()]
+    items: list[dict[str, Any]] = []
+    for line in lines[offset : offset + limit]:
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            item = {"raw": line}
+        if isinstance(item, dict):
+            items.append(item)
+    return {"path": str(path), "offset": offset, "limit": limit, "total": len(lines), "items": items}
 
 
 @app.post("/api/scans/{scan_id}/stop")
@@ -443,7 +647,10 @@ def read_audit_agent(
         audits = []
     # 审计 Agent 的结果可能没有携带 vulnerability_type；这里回连 CallScan priority chains，
     # 用 chain_id / analysis_id 补齐漏洞类型和 sink 位置，避免前端全部显示 unknown。
-    chain_index = _load_priority_chain_index(_artifact_path(project_path, "callscan_chains.priority.jsonl", scan_id))
+    root = _resolve_project_root(project_path)
+    artifacts_dir = _scan_artifacts_dir(root, scan_id) if scan_id else _artifacts_dir(root)
+    chain_index = _load_priority_chain_index(artifacts_dir / "callscan_chains.priority.jsonl")
+    chain_index.update(_load_priority_chain_index(artifacts_dir / "callscan_chains.all.jsonl"))
     filtered = [
         _normalize_audit_item(item, index, chain_index)
         for index, item in enumerate(audits)
@@ -549,8 +756,7 @@ def _project_audit_summary(root: Path, latest: dict[str, Any] | None) -> dict[st
 def _callscan_summary(root: Path, latest: dict[str, Any] | None) -> dict[str, Any]:
     if latest and latest.get("callscan_summary"):
         return latest["callscan_summary"]
-    path = _artifacts_dir(root) / "callscan_chains.priority.jsonl"
-    return {"candidate_chains": _count_jsonl(path)}
+    return _callscan_summary_for_artifacts(_artifacts_dir(root))
 
 
 def _artifact_stats(artifacts_dir: Path) -> dict[str, Any]:
@@ -571,8 +777,31 @@ def _hydrate_scan(root: Path, scan: dict[str, Any]) -> dict[str, Any]:
     scan["artifacts_dir"] = str(artifacts_dir)
     scan["artifacts"] = _artifact_stats(artifacts_dir)
     scan["audit_summary"] = _audit_summary_for_path(artifacts_dir / "audit_agent.json")
-    scan["callscan_summary"] = {"candidate_chains": _count_jsonl(artifacts_dir / "callscan_chains.priority.jsonl")}
+    scan["callscan_summary"] = _callscan_summary_for_artifacts(artifacts_dir)
     return scan
+
+
+def _callscan_summary_for_artifacts(artifacts_dir: Path) -> dict[str, Any]:
+    """Return candidate-pool status for the workbench without forcing artifact reads."""
+
+    all_path = artifacts_dir / "callscan_chains.all.jsonl"
+    priority_path = artifacts_dir / "callscan_chains.priority.jsonl"
+    all_count = _count_jsonl(all_path)
+    priority_count = _count_jsonl(priority_path)
+    has_full_pool = all_path.is_file()
+    has_legacy_priority = priority_path.is_file()
+    candidate_source = "all" if has_full_pool else "priority" if has_legacy_priority else "none"
+    return {
+        "candidate_chains": all_count if has_full_pool else priority_count,
+        "all_chains": all_count,
+        "priority_chains": priority_count,
+        "partial_chains": _count_jsonl(artifacts_dir / "callscan_chains.partial.jsonl"),
+        "completed": _count_jsonl(artifacts_dir / "audit_completed_pool.jsonl"),
+        "batches": len(list_audit_batches(artifacts_dir)),
+        "has_full_pool": has_full_pool,
+        "has_legacy_priority": has_legacy_priority,
+        "candidate_source": candidate_source,
+    }
 
 
 def _read_scan_index(root: Path) -> list[dict[str, Any]]:
@@ -609,6 +838,82 @@ def _require_scan(root: Path, scan_id: str) -> dict[str, Any]:
         if scan.get("scan_id") == scan_id:
             return scan
     raise HTTPException(status_code=404, detail="Scan not found")
+
+
+def _spawn_scan_command(
+    *,
+    root: Path,
+    scan: dict[str, Any],
+    scan_id: str,
+    cmd_extra: list[str],
+    log_path: Path | None = None,
+    priority_chain_limit: int | None = None,
+    audit_limit: int | None = None,
+    audit_dry_run: bool = False,
+) -> dict[str, Any]:
+    run_id = f"run-{uuid.uuid4().hex[:12]}"
+    artifacts_dir = _scan_artifacts_dir(root, scan_id)
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_path or (_scan_dir(root, scan_id) / CONSOLE_FILENAME)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text("", encoding="utf-8")
+    cmd = [
+        sys.executable,
+        str(BACKEND_DIR / "main.py"),
+        _relative_project_path(root),
+        "--artifacts-dir",
+        str(artifacts_dir),
+        *cmd_extra,
+    ]
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(BACKEND_DIR)
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+    log_handle = log_path.open("a", encoding="utf-8", errors="replace")
+    process = subprocess.Popen(
+        cmd,
+        cwd=str(WORKSPACE_ROOT),
+        env=env,
+        stdout=log_handle,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    run = RunProcess(
+        run_id=run_id,
+        scan_id=scan_id,
+        project_path=_relative_project_path(root),
+        process=process,
+        log_path=log_path,
+        cmd=cmd,
+        priority_chain_limit=priority_chain_limit,
+        audit_limit=audit_limit,
+        audit_dry_run=audit_dry_run,
+    )
+    RUNS[run_id] = run
+    now = _now_iso()
+    scan.update(
+        {
+            "status": "running",
+            "started_at": now,
+            "finished_at": None,
+            "updated_at": now,
+            "last_run_id": run_id,
+            "effective_command": cmd,
+        }
+    )
+    _write_scan(root, scan)
+    threading.Thread(target=_watch_run, args=(run_id, log_handle), daemon=True).start()
+    return {
+        "run_id": run_id,
+        "scan_id": scan_id,
+        "status": "running",
+        "cmd": cmd,
+        "priority_chain_limit": priority_chain_limit,
+        "audit_limit": audit_limit,
+        "audit_dry_run": audit_dry_run,
+    }
 
 
 def _watch_run(run_id: str, log_handle: Any) -> None:
@@ -714,6 +1019,7 @@ def _audit_summary_for_path(path: Path) -> dict[str, Any]:
     if not isinstance(audits, list):
         audits = []
     chain_index = _load_priority_chain_index(path.with_name("callscan_chains.priority.jsonl"))
+    chain_index.update(_load_priority_chain_index(path.with_name("callscan_chains.all.jsonl")))
     items = [
         _normalize_audit_item(item, index, chain_index)
         for index, item in enumerate(audits)
@@ -869,6 +1175,98 @@ def _load_priority_chain_index(path: Path) -> dict[str, dict[str, Any]]:
     return index
 
 
+def _load_candidate_pool_for_api(artifacts_dir: Path) -> tuple[list[dict[str, Any]], str]:
+    all_path = artifacts_dir / "callscan_chains.all.jsonl"
+    priority_path = artifacts_dir / "callscan_chains.priority.jsonl"
+    if all_path.is_file():
+        return load_priority_chain_jsonl(all_path), "all"
+    if priority_path.is_file():
+        return load_priority_chain_jsonl(priority_path), "priority"
+    return [], "none"
+
+
+def _normalize_candidate_item(
+    chain: dict[str, Any],
+    completed: dict[str, list[dict[str, Any]]],
+    batches: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any]:
+    sink = chain.get("sink") if isinstance(chain.get("sink"), dict) else {}
+    rank = chain.get("rank") if isinstance(chain.get("rank"), dict) else {}
+    chain_id = str(chain.get("path_id") or chain.get("chain_id") or chain.get("analysis_id") or "")
+    return {
+        "chain_id": chain_id,
+        "path_id": str(chain.get("path_id") or chain_id),
+        "analysis_id": str(chain.get("analysis_id") or ""),
+        "priority_index": int(chain.get("priority_index", 0) or 0),
+        "language": str(chain.get("language") or sink.get("language") or "unknown"),
+        "vulnerability_type": str(chain.get("vulnerability_type") or sink.get("vulnerability_type") or sink.get("vulnerability") or "unknown"),
+        "severity": _normalize_severity(rank.get("risk_level") or sink.get("severity") or "unknown"),
+        "risk_score": int(rank.get("risk_score", 0) or 0),
+        "priority": str(rank.get("priority") or "P9"),
+        "sink": sink,
+        "entry": chain.get("entry") if isinstance(chain.get("entry"), dict) else {},
+        "rank": rank,
+        "file": str(sink.get("file") or ""),
+        "line": int(sink.get("line", 0) or 0),
+        "function": str(sink.get("function") or sink.get("sink_id") or ""),
+        "completed": bool(completed.get(chain_id)),
+        "completed_records": completed.get(chain_id, []),
+        "batches": batches.get(chain_id, []),
+    }
+
+
+def _candidate_facets(items: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+    facets = {"vulnerability_types": {}, "risk_levels": {}}
+    for item in items:
+        vulnerability = str(item.get("vulnerability_type") or "unknown").strip().lower() or "unknown"
+        severity = str(item.get("severity") or "unknown").strip().lower() or "unknown"
+        facets["vulnerability_types"][vulnerability] = facets["vulnerability_types"].get(vulnerability, 0) + 1
+        facets["risk_levels"][severity] = facets["risk_levels"].get(severity, 0) + 1
+    return facets
+
+
+def _completed_pool_index(artifacts_dir: Path) -> dict[str, list[dict[str, Any]]]:
+    index: dict[str, list[dict[str, Any]]] = {}
+    for item in _read_jsonl_objects(artifacts_dir / "audit_completed_pool.jsonl"):
+        chain_id = str(item.get("chain_id") or "")
+        if chain_id:
+            index.setdefault(chain_id, []).append(item)
+    return index
+
+
+def _batch_membership_index(artifacts_dir: Path) -> dict[str, list[dict[str, Any]]]:
+    index: dict[str, list[dict[str, Any]]] = {}
+    for batch in list_audit_batches(artifacts_dir):
+        batch_id = str(batch.get("batch_id") or "")
+        for item in _read_jsonl_objects(artifacts_dir / "audit_batches" / batch_id / "queue.jsonl"):
+            chain_id = str(item.get("path_id") or item.get("chain_id") or item.get("analysis_id") or "")
+            if chain_id:
+                index.setdefault(chain_id, []).append(
+                    {
+                        "batch_id": batch_id,
+                        "name": batch.get("name") or batch_id,
+                        "status": batch.get("status", "pending"),
+                    }
+                )
+    return index
+
+
+def _read_jsonl_objects(path: Path) -> list[dict[str, Any]]:
+    if not path.is_file():
+        return []
+    items: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(item, dict):
+            items.append(item)
+    return items
+
+
 def _verdict_bucket(value: Any) -> str:
     verdict = str(value or "").lower()
     if verdict in {"vulnerable", "confirmed", "true_positive"}:
@@ -957,6 +1355,15 @@ def _positive_int_or_none(value: Any) -> int | None:
     except (TypeError, ValueError):
         return None
     return parsed if parsed > 0 else None
+
+
+def _positive_int_or_default(value: Any, default: int) -> int:
+    parsed = _positive_int_or_none(value)
+    return parsed if parsed is not None else default
+
+
+def _csv_values(value: str) -> list[str]:
+    return [item.strip() for item in str(value or "").split(",") if item.strip()]
 
 
 def _last_non_empty_line(text: str) -> str:

@@ -19,9 +19,10 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
-from app.callscan import run_callscan
+from app.callscan import create_audit_batch, run_audit_batch, run_callscan
 from app.core.config import LLM_BASEURL, LLM_MODEL, LLM_PROVIDER
 from app.scanner import run_audit_scanner
+from app.treescan import run_treescan
 from app.workflow import run_workflow
 
 
@@ -96,6 +97,54 @@ def build_parser() -> argparse.ArgumentParser:
         default=20,
         metavar="N",
         help="When --callscan is enabled, write the top N ranked chains to callscan_chains.priority.jsonl.",
+    )
+    parser.add_argument(
+        "--discover",
+        action="store_true",
+        help="Run TreeScan if needed, then build or reuse the full CallScan candidate pool.",
+    )
+    parser.add_argument(
+        "--force-discover",
+        action="store_true",
+        help="Ignore existing CallScan discovery cache and rebuild the full candidate pool.",
+    )
+    parser.add_argument(
+        "--schedule",
+        action="store_true",
+        help="Create an audit batch queue from callscan_chains.all.jsonl without running Scanner.",
+    )
+    parser.add_argument(
+        "--batch-audit",
+        action="store_true",
+        help="Discover if needed, schedule a batch, then audit that batch.",
+    )
+    parser.add_argument(
+        "--audit-batch",
+        metavar="BATCH_ID",
+        default=None,
+        help="Run Scanner against an existing audit_batches/<batch_id>/queue.jsonl.",
+    )
+    parser.add_argument(
+        "--audit-per-type",
+        type=int,
+        default=1,
+        metavar="N",
+        help="When scheduling a batch, select at least N chains per vulnerability type before risk fill.",
+    )
+    parser.add_argument(
+        "--audit-vuln-types",
+        default="",
+        help="Comma-separated vulnerability types to schedule, e.g. xss,ssrf,path_traversal.",
+    )
+    parser.add_argument(
+        "--batch-name",
+        default=None,
+        help="Optional human-readable audit batch name.",
+    )
+    parser.add_argument(
+        "--include-completed",
+        action="store_true",
+        help="Allow scheduler to include chains already present in audit_completed_pool.jsonl.",
     )
     return parser
 
@@ -506,6 +555,32 @@ def _resolve_callscan_project_path(project_path: str) -> str:
     return project_path
 
 
+def _resolve_artifacts_dir(project_root: str, artifacts_dir: str | None) -> Path:
+    root = Path(project_root).expanduser().resolve()
+    if artifacts_dir:
+        path = Path(artifacts_dir).expanduser()
+        if not path.is_absolute():
+            path = root / path
+        return path.resolve()
+    return root / ".defectmine"
+
+
+def _ensure_treescan_profile(project_root: str, artifacts_dir: Path, reporter: Any, *, force: bool, persist: bool) -> None:
+    profile_path = artifacts_dir / "treescan_agent.json"
+    if profile_path.is_file() and not force:
+        return
+    run_treescan(
+        project_root,
+        artifacts_dir=artifacts_dir,
+        persist=persist,
+        progress_reporter=reporter,
+    )
+
+
+def _csv_values(value: str) -> list[str]:
+    return [item.strip() for item in str(value or "").split(",") if item.strip()]
+
+
 def render_sink_hits_report(report: dict[str, Any], limit: int) -> None:
     # sink_hits can be large, so the CLI shows statistics plus the first N rows while the full JSON remains persisted.
     sink_hits = report.get("sink_hits", [])
@@ -785,10 +860,81 @@ def main() -> int:
 
     try:
         with CliReporter() as reporter:
-            if args.callscan:
+            project_root = _resolve_callscan_project_path(args.project_path)
+            artifacts_dir = _resolve_artifacts_dir(project_root, args.artifacts_dir)
+            if args.discover:
+                _ensure_treescan_profile(project_root, artifacts_dir, reporter, force=args.force_discover, persist=not args.no_persist)
                 result = run_callscan(
-                    _resolve_callscan_project_path(args.project_path),
-                    artifacts_dir=args.artifacts_dir,
+                    project_root,
+                    artifacts_dir=artifacts_dir,
+                    persist=not args.no_persist,
+                    progress_reporter=reporter,
+                    priority_chain_limit=max(args.priority_chain_limit, 0),
+                    reuse_discovery=True,
+                    force_discover=args.force_discover,
+                )
+                render_ranked_impact_paths_report(result.report)
+            elif args.schedule:
+                batch = create_audit_batch(
+                    artifacts_dir,
+                    limit=args.audit_limit or max(args.priority_chain_limit, 0),
+                    per_type=args.audit_per_type,
+                    vulnerability_types=_csv_values(args.audit_vuln_types),
+                    exclude_completed=not args.include_completed,
+                    name=args.batch_name,
+                    progress_reporter=reporter,
+                )
+                console.print(
+                    "[bold green]Audit batch scheduled[/bold green] "
+                    f"{batch.get('batch_id')} | queue [cyan]{batch.get('queue_count', 0)}[/cyan]"
+                )
+            elif args.audit_batch:
+                result = run_audit_batch(
+                    project_root,
+                    artifacts_dir,
+                    args.audit_batch,
+                    audit_limit=args.audit_limit,
+                    enable_llm_audit=not args.audit_dry_run,
+                    enable_mcp_tools=not args.audit_no_tools,
+                    progress_reporter=reporter,
+                )
+                render_audit_result_report(result.report)
+            elif args.batch_audit:
+                _ensure_treescan_profile(project_root, artifacts_dir, reporter, force=args.force_discover, persist=not args.no_persist)
+                all_pool = artifacts_dir / "callscan_chains.all.jsonl"
+                if args.force_discover or not all_pool.is_file():
+                    run_callscan(
+                        project_root,
+                        artifacts_dir=artifacts_dir,
+                        persist=not args.no_persist,
+                        progress_reporter=reporter,
+                        priority_chain_limit=max(args.priority_chain_limit, 0),
+                        reuse_discovery=True,
+                        force_discover=args.force_discover,
+                    )
+                batch = create_audit_batch(
+                    artifacts_dir,
+                    limit=args.audit_limit or max(args.priority_chain_limit, 0),
+                    per_type=args.audit_per_type,
+                    vulnerability_types=_csv_values(args.audit_vuln_types),
+                    exclude_completed=not args.include_completed,
+                    name=args.batch_name,
+                    progress_reporter=reporter,
+                )
+                result = run_audit_batch(
+                    project_root,
+                    artifacts_dir,
+                    str(batch.get("batch_id")),
+                    audit_limit=args.audit_limit,
+                    enable_llm_audit=not args.audit_dry_run,
+                    enable_mcp_tools=not args.audit_no_tools,
+                    progress_reporter=reporter,
+                )
+                render_audit_result_report(result.report)
+            elif args.callscan:
+                result = run_callscan(
+                    project_root,
+                    artifacts_dir=artifacts_dir,
                     persist=not args.no_persist,
                     progress_reporter=reporter,
                     priority_chain_limit=max(args.priority_chain_limit, 0),
@@ -797,8 +943,8 @@ def main() -> int:
                 render_sink_hits_report(result.report, args.show_sink_hits)
             elif args.audit:
                 result = run_audit_scanner(
-                    _resolve_callscan_project_path(args.project_path),
-                    artifacts_dir=args.artifacts_dir,
+                    project_root,
+                    artifacts_dir=artifacts_dir,
                     audit_limit=args.audit_limit,
                     enable_llm_audit=not args.audit_dry_run,
                     enable_mcp_tools=not args.audit_no_tools,

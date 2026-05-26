@@ -242,7 +242,7 @@ input, select {
 .dm-list { display: grid; gap: 10px; }
 .dm-chain-row, .dm-audit-row {
   display: grid;
-  grid-template-columns: 56px 1fr auto;
+  grid-template-columns: 56px 1fr auto auto;
   gap: 12px;
   align-items: center;
   padding: 12px;
@@ -260,6 +260,12 @@ input, select {
   background: #172646;
   color: var(--accent);
   font-weight: 700;
+}
+.dm-index input[type="checkbox"] {
+  min-width: auto;
+  width: 16px;
+  height: 16px;
+  padding: 0;
 }
 .dm-audit-row { grid-template-columns: 1fr auto auto; }
 .dm-audit-row .dm-verdict, .dm-audit-row .dm-pill { white-space: nowrap; }

@@ -14,7 +14,7 @@ export interface ProjectSummary {
   scan_count: number;
   latest_scan?: ScanRecord | null;
   audit_summary: AuditSummary;
-  callscan_summary: { candidate_chains: number };
+  callscan_summary: CallScanSummary;
 }
 
 export interface ScanRecord {
@@ -34,7 +34,19 @@ export interface ScanRecord {
   artifacts_dir?: string;
   artifacts?: Record<string, ArtifactStat>;
   audit_summary?: AuditSummary;
-  callscan_summary?: { candidate_chains: number };
+  callscan_summary?: CallScanSummary;
+}
+
+export interface CallScanSummary {
+  candidate_chains: number;
+  all_chains?: number;
+  priority_chains?: number;
+  partial_chains?: number;
+  completed?: number;
+  batches?: number;
+  has_full_pool?: boolean;
+  has_legacy_priority?: boolean;
+  candidate_source?: "all" | "priority" | "none" | string;
 }
 
 export interface ProjectListResponse {
@@ -100,6 +112,8 @@ export interface CreateScanInput {
   step?: string;
   audit_limit?: number;
   priority_chain_limit?: number;
+  audit_per_type?: number;
+  vulnerability_types?: string;
   audit_dry_run?: boolean;
 }
 
@@ -108,6 +122,8 @@ export interface UpdateScanInput {
   step?: string;
   audit_limit?: number | null;
   priority_chain_limit?: number;
+  audit_per_type?: number;
+  vulnerability_types?: string;
   audit_dry_run?: boolean;
 }
 
@@ -116,6 +132,9 @@ export interface StartScanInput {
   step?: string;
   audit_limit?: number | null;
   priority_chain_limit?: number;
+  audit_per_type?: number;
+  vulnerability_types?: string;
+  force_discover?: boolean;
   audit_dry_run?: boolean;
 }
 
@@ -127,6 +146,68 @@ export interface StartScanResult {
   priority_chain_limit?: number | null;
   audit_limit?: number | null;
   audit_dry_run?: boolean;
+}
+
+export interface AuditBatch {
+  batch_id: string;
+  name?: string;
+  status: RunStatus | "pending";
+  created_at?: string;
+  updated_at?: string;
+  started_at?: string;
+  finished_at?: string;
+  queue_count?: number;
+  audited_count?: number;
+  limit?: number;
+  per_type?: number;
+  vulnerability_types?: string[];
+  coverage?: Record<string, unknown>;
+  summary?: Record<string, unknown>;
+}
+
+export interface CreateBatchInput {
+  project_path: string;
+  name?: string;
+  audit_limit?: number;
+  audit_per_type?: number;
+  vulnerability_types?: string;
+  selected_chain_ids?: string[];
+  exclude_completed?: boolean;
+}
+
+export interface CandidateChain {
+  chain_id: string;
+  path_id?: string;
+  analysis_id?: string;
+  priority_index?: number;
+  language?: string;
+  vulnerability_type?: string;
+  severity?: string;
+  risk_score?: number;
+  priority?: string;
+  file?: string;
+  line?: number;
+  function?: string;
+  completed?: boolean;
+  completed_records?: Record<string, unknown>[];
+  batches?: { batch_id: string; name?: string; status?: string }[];
+  sink?: Record<string, unknown>;
+  entry?: Record<string, unknown>;
+  rank?: Record<string, unknown>;
+}
+
+export interface CandidateResponse {
+  source: "all" | "priority" | "none" | string;
+  has_full_pool: boolean;
+  has_legacy_priority: boolean;
+  offset: number;
+  limit: number;
+  total: number;
+  facets?: {
+    vulnerability_types?: Record<string, number>;
+    risk_levels?: Record<string, number>;
+  };
+  items: CandidateChain[];
 }
 
 export interface RunInfo {
@@ -196,6 +277,14 @@ function normalizeProject(raw: any): ProjectSummary {
     audit_summary: audit,
     callscan_summary: {
       candidate_chains: Number(callscan.candidate_chains ?? callscan.priority_chains ?? raw.priority_chain_count ?? 0),
+      all_chains: Number(callscan.all_chains ?? callscan.candidate_chains ?? 0),
+      priority_chains: Number(callscan.priority_chains ?? 0),
+      partial_chains: Number(callscan.partial_chains ?? 0),
+      completed: Number(callscan.completed ?? 0),
+      batches: Number(callscan.batches ?? 0),
+      has_full_pool: Boolean(callscan.has_full_pool),
+      has_legacy_priority: Boolean(callscan.has_legacy_priority),
+      candidate_source: callscan.candidate_source ?? "none",
     },
   };
 }
@@ -260,6 +349,46 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input),
     }),
+  discoverScan: (scanId: string, input: { project_path: string; priority_chain_limit?: number; force_discover?: boolean }) =>
+    request<StartScanResult>(`/api/scans/${encodeURIComponent(scanId)}/discover`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  createBatch: (scanId: string, input: CreateBatchInput) =>
+    request<AuditBatch>(`/api/scans/${encodeURIComponent(scanId)}/batches`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  batches: (scanId: string, projectPath: string) =>
+    request<{ items: AuditBatch[] }>(`/api/scans/${encodeURIComponent(scanId)}/batches?project_path=${encodeURIComponent(projectPath)}`),
+  startBatch: (scanId: string, batchId: string, input: { project_path: string; audit_limit?: number | null; audit_dry_run?: boolean }) =>
+    request<StartScanResult>(`/api/scans/${encodeURIComponent(scanId)}/batches/${encodeURIComponent(batchId)}/start`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  coverage: (scanId: string, projectPath: string) =>
+    request<ArtifactJsonResponse<Record<string, unknown>>>(`/api/scans/${encodeURIComponent(scanId)}/coverage?project_path=${encodeURIComponent(projectPath)}`),
+  candidates: (
+    scanId: string,
+    projectPath: string,
+    params?: {
+      offset?: number;
+      limit?: number;
+      keyword?: string;
+      vulnerability_type?: string;
+      severity?: string;
+    }
+  ) => {
+    const query = new URLSearchParams({
+      project_path: projectPath,
+      offset: String(params?.offset ?? 0),
+      limit: String(params?.limit ?? 50),
+    });
+    if (params?.keyword) query.set("keyword", params.keyword);
+    if (params?.vulnerability_type) query.set("vulnerability_type", params.vulnerability_type);
+    if (params?.severity) query.set("severity", params.severity);
+    return request<CandidateResponse>(`/api/scans/${encodeURIComponent(scanId)}/candidates?${query.toString()}`);
+  },
   stopScan: (scanId: string, projectPath: string) =>
     request<{ ok: boolean; scan_id: string }>(
       `/api/scans/${encodeURIComponent(scanId)}/stop?project_path=${encodeURIComponent(projectPath)}`,

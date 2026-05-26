@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
@@ -9,6 +10,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from app.callscan.batch import (
+    CALLSCAN_ALL_CHAINS_FILENAME,
+    CALLSCAN_COVERAGE_FILENAME,
+    CALLSCAN_DISCOVERY_META_FILENAME,
+    CALLSCAN_PARTIAL_CHAINS_FILENAME,
+    build_callscan_coverage,
+)
 from app.callscan.paths import RepoPathContext
 from app.callscan.priority_schema import (
     priority_chain_record_from_audit_pack,
@@ -59,6 +67,9 @@ class CallScanResult:
             "artifacts": {
                 "report": str(self.artifacts_dir / CALLSCAN_REPORT_FILENAME),
                 "priority_chains": str(self.artifacts_dir / CALLSCAN_PRIORITY_CHAINS_FILENAME),
+                "all_chains": str(self.artifacts_dir / CALLSCAN_ALL_CHAINS_FILENAME),
+                "partial_chains": str(self.artifacts_dir / CALLSCAN_PARTIAL_CHAINS_FILENAME),
+                "coverage": str(self.artifacts_dir / CALLSCAN_COVERAGE_FILENAME),
             },
             "summary": self.report.get("summary", {}),
         }
@@ -73,6 +84,8 @@ def run_callscan(
     progress_reporter: ProgressReporter | None = None,
     tldr_resolver: TldrResolver | None = None,
     priority_chain_limit: int = 20,
+    reuse_discovery: bool = False,
+    force_discover: bool = False,
 ) -> CallScanResult:
     """
     Build the CallScan artifact from TreeScan output.
@@ -104,6 +117,24 @@ def run_callscan(
     sink_rules = load_sink_rules(
         languages=sink_languages,
     )
+    cache_meta = _build_discovery_meta(
+        context=context,
+        treescan_profile_path=profile_path,
+        sink_rules=rules_as_dicts(sink_rules),
+        report=None,
+    )
+    if reuse_discovery and not force_discover and _discovery_cache_is_valid(context, cache_meta):
+        report = _read_json(context.artifact_path(CALLSCAN_REPORT_FILENAME))
+        _report_progress(
+            progress_reporter,
+            {
+                "event": "callscan_discovery_reused",
+                "artifact": str(context.artifact_path(CALLSCAN_ALL_CHAINS_FILENAME)),
+                "summary": report.get("summary", {}),
+            },
+        )
+        return CallScanResult(root=context.root, artifacts_dir=context.artifacts_dir, report=report)
+
     sink_hits = _collect_sink_hits(
         context=context,
         sink_rules=sink_rules,
@@ -138,14 +169,28 @@ def run_callscan(
         elapsed_seconds=round(time.perf_counter() - started_at, 4),
         priority_chain_limit=priority_chain_limit,
     )
+    report["discovery_meta"] = _build_discovery_meta(
+        context=context,
+        treescan_profile_path=profile_path,
+        sink_rules=rules_as_dicts(sink_rules),
+        report=report,
+    )
 
     if persist:
         context.artifacts_dir.mkdir(parents=True, exist_ok=True)
-        _write_json(report, context.artifact_path(CALLSCAN_REPORT_FILENAME))
         _write_jsonl(
             report.get("priority_chains", []),
             context.artifact_path(CALLSCAN_PRIORITY_CHAINS_FILENAME),
         )
+        # Discovery artifacts separate the expensive full candidate pool from the
+        # small compatibility queue consumed by the legacy Scanner entrypoint.
+        _write_jsonl(report.get("_all_chains", []), context.artifact_path(CALLSCAN_ALL_CHAINS_FILENAME))
+        _write_jsonl(report.get("_partial_chains", []), context.artifact_path(CALLSCAN_PARTIAL_CHAINS_FILENAME))
+        report.pop("_all_chains", None)
+        report.pop("_partial_chains", None)
+        _write_json(report.get("coverage", {}), context.artifact_path(CALLSCAN_COVERAGE_FILENAME))
+        _write_json(report.get("discovery_meta", {}), context.artifact_path(CALLSCAN_DISCOVERY_META_FILENAME))
+        _write_json(report, context.artifact_path(CALLSCAN_REPORT_FILENAME))
 
     _report_progress(
         progress_reporter,
@@ -153,6 +198,7 @@ def run_callscan(
             "event": "callscan_completed",
             "artifact": str(context.artifact_path(CALLSCAN_REPORT_FILENAME)),
             "priority_chains_artifact": str(context.artifact_path(CALLSCAN_PRIORITY_CHAINS_FILENAME)),
+            "all_chains_artifact": str(context.artifact_path(CALLSCAN_ALL_CHAINS_FILENAME)),
             "summary": report.get("summary", {}),
         },
     )
@@ -211,6 +257,23 @@ def build_callscan_report(
     # JSONL 中间产物：每行是一条完整优先级调用链，Scanner 可按行流式消费。
     priority_chains = _priority_chain_records(audit_packs)
     validate_priority_chain_records(priority_chains)
+    # Full discovery pool: CallScan renders every complete ranked path once so
+    # later audit batches can be scheduled without re-running sink discovery.
+    all_audit_packs = [
+        attach_rank_to_audit_pack(
+            format_audit_pack(candidate_path=ranked_path["path"], function_pool=function_pool),
+            ranked_path,
+        )
+        for ranked_path in ranked_impact_paths
+    ]
+    all_chains = _priority_chain_records(all_audit_packs)
+    validate_priority_chain_records(all_chains)
+    partial_chains = _partial_chain_records(
+        tldr_impact_paths=tldr_impact_paths,
+        complete_impact_paths=complete_impact_paths,
+        sink_analyses=sink_analyses,
+    )
+    coverage = build_callscan_coverage(all_chains, partial_chains)
     entry_nodes = _list_of_dicts(tldr_result.get("entry_nodes"))
     uncertain_edges = [
         *_uncertain_edges_from_analyses(sink_analyses),
@@ -236,6 +299,10 @@ def build_callscan_report(
         "outputs": {
             "report": context.relative(context.artifact_path(CALLSCAN_REPORT_FILENAME)),
             "priority_chains": context.relative(context.artifact_path(CALLSCAN_PRIORITY_CHAINS_FILENAME)),
+            "all_chains": context.relative(context.artifact_path(CALLSCAN_ALL_CHAINS_FILENAME)),
+            "partial_chains": context.relative(context.artifact_path(CALLSCAN_PARTIAL_CHAINS_FILENAME)),
+            "coverage": context.relative(context.artifact_path(CALLSCAN_COVERAGE_FILENAME)),
+            "discovery_meta": context.relative(context.artifact_path(CALLSCAN_DISCOVERY_META_FILENAME)),
             "priority_chain_limit": max(int(priority_chain_limit or 0), 0),
         },
         "path_policy": {
@@ -282,9 +349,14 @@ def build_callscan_report(
         "tldr_impact_paths": tldr_impact_paths,
         "complete_impact_paths": complete_impact_paths,
         "ranked_impact_paths": ranked_impact_paths,
+        "all_candidate_preview": all_chains[:20],
+        "partial_chain_preview": partial_chains[:20],
+        "coverage": coverage,
         "function_pool": function_pool,
         "audit_packs": audit_packs,
         "scanner_audit_queue": audit_packs,
+        "_all_chains": all_chains,
+        "_partial_chains": partial_chains,
         "priority_chains": priority_chains,
         "traces": traces,
         "uncertain_edges": uncertain_edges,
@@ -300,6 +372,8 @@ def build_callscan_report(
             "tldr_impact_paths": len(tldr_impact_paths),
             "complete_impact_paths": len(complete_impact_paths),
             "ranked_impact_paths": len(ranked_impact_paths),
+            "all_chains": len(all_chains),
+            "partial_chains": len(partial_chains),
             "function_pool": len(function_pool),
             "audit_packs": len(audit_packs),
             "scanner_audit_queue": len(audit_packs),
@@ -1686,6 +1760,136 @@ def _read_json(path: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError(f"JSON artifact must contain an object: {path}")
     return data
+
+
+def _partial_chain_records(
+    *,
+    tldr_impact_paths: list[dict[str, Any]],
+    complete_impact_paths: list[dict[str, Any]],
+    sink_analyses: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    complete_ids = {str(item.get("path_id", "")) for item in complete_impact_paths}
+    analyses_by_id = {
+        str(item.get("analysis_id", "")): item
+        for item in sink_analyses
+        if isinstance(item, dict)
+    }
+    records: list[dict[str, Any]] = []
+    for index, path in enumerate(tldr_impact_paths, start=1):
+        path_id = str(path.get("path_id", ""))
+        if not path_id or path_id in complete_ids:
+            continue
+        analysis = analyses_by_id.get(str(path.get("analysis_id", "")), {})
+        sink = _object_or_empty(analysis.get("sink"))
+        location = _object_or_empty(analysis.get("location"))
+        vuln = str(sink.get("vulnerability_type") or sink.get("vulnerability") or "unknown")
+        records.append(
+            {
+                "schema_version": "defectmine.callscan.partial_chain.v1",
+                "partial_index": index,
+                "path_id": path_id,
+                "analysis_id": str(path.get("analysis_id", "")),
+                "status": str(path.get("status", "unknown")),
+                "termination": str(path.get("termination", "unknown")),
+                "complete": False,
+                "language": str(analysis.get("language") or sink.get("language") or "unknown"),
+                "vulnerability_type": vuln,
+                "sink": {
+                    "sink_id": sink.get("sink_id", ""),
+                    "file": location.get("file", ""),
+                    "line": sink.get("line", location.get("sink_line", 0)),
+                    "function": sink.get("match", ""),
+                    "vulnerability_type": vuln,
+                },
+                "depth": int(path.get("depth", 0) or 0),
+                "nodes": _list_of_dicts(path.get("nodes")),
+                "reason": _partial_reason(path),
+            }
+        )
+    return records
+
+
+def _partial_reason(path: dict[str, Any]) -> str:
+    termination = str(path.get("termination", "unknown"))
+    if termination == "no_caller":
+        return "no caller found before reaching a route/API/framework entry"
+    if termination == "cycle":
+        return "call graph cycle prevented a complete entry-to-sink chain"
+    return f"incomplete impact path: {termination}"
+
+
+def _build_discovery_meta(
+    *,
+    context: RepoPathContext,
+    treescan_profile_path: Path,
+    sink_rules: list[dict[str, Any]],
+    report: dict[str, Any] | None,
+) -> dict[str, Any]:
+    summary = report.get("summary", {}) if isinstance(report, dict) else {}
+    return {
+        "schema_version": "defectmine.callscan.discovery_meta.v1",
+        "project_fingerprint": _project_fingerprint(context.root),
+        "treescan_profile_fingerprint": _file_fingerprint(treescan_profile_path),
+        "sink_rules_fingerprint": _stable_fingerprint(sink_rules),
+        "callscan_version": "v2",
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "total_candidates": int(summary.get("all_chains", 0) or 0),
+        "complete_candidates": int(summary.get("all_chains", 0) or 0),
+        "partial_candidates": int(summary.get("partial_chains", 0) or 0),
+    }
+
+
+def _discovery_cache_is_valid(context: RepoPathContext, expected: dict[str, Any]) -> bool:
+    meta_path = context.artifact_path(CALLSCAN_DISCOVERY_META_FILENAME)
+    required = [
+        context.artifact_path(CALLSCAN_REPORT_FILENAME),
+        context.artifact_path(CALLSCAN_ALL_CHAINS_FILENAME),
+        context.artifact_path(CALLSCAN_COVERAGE_FILENAME),
+    ]
+    if not all(path.is_file() for path in required):
+        return False
+    try:
+        current = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    for key in ("project_fingerprint", "treescan_profile_fingerprint", "sink_rules_fingerprint", "callscan_version"):
+        if current.get(key) != expected.get(key):
+            return False
+    return True
+
+
+def _project_fingerprint(root: Path) -> str:
+    digest = hashlib.sha256()
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(root).as_posix()
+        if relative.startswith(".defectmine/") or should_skip_scan_path(relative):
+            continue
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        digest.update(relative.encode("utf-8", errors="ignore"))
+        digest.update(str(stat.st_size).encode())
+        digest.update(str(stat.st_mtime_ns).encode())
+    return digest.hexdigest()
+
+
+def _file_fingerprint(path: Path) -> str:
+    if not path.is_file():
+        return ""
+    digest = hashlib.sha256()
+    try:
+        digest.update(path.read_bytes())
+    except OSError:
+        return ""
+    return digest.hexdigest()
+
+
+def _stable_fingerprint(data: Any) -> str:
+    text = json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _write_json(data: Any, path: Path) -> None:

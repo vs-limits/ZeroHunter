@@ -13,7 +13,19 @@ import {
   Trash2,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { api, ArtifactJsonResponse, AuditResponse, AuditSummary, DashboardResponse, ProjectSummary, RunInfo, ScanRecord } from "./api";
+import {
+  api,
+  type ArtifactJsonResponse,
+  type AuditBatch,
+  type AuditResponse,
+  type AuditSummary,
+  type CandidateChain,
+  type CandidateResponse,
+  type DashboardResponse,
+  type ProjectSummary,
+  type RunInfo,
+  type ScanRecord,
+} from "./api";
 
 type MainView = "dashboard" | "project" | "scan";
 type ScanTab = "control" | "treescan" | "callscan" | "audit";
@@ -76,7 +88,7 @@ export function App() {
     if (!activeProject) return;
     if (scansByProject[activeProject.project_path]) return;
     void refreshScans(activeProject.project_path).catch((e) => setError(String(e)));
-  }, [activeProject, scansByProject, refreshScans]);
+  }, [activeProject, refreshScans, scansByProject]);
 
   function selectProject(project: ProjectSummary) {
     setActiveProject(project);
@@ -254,6 +266,7 @@ function DashboardView({
               <span className="dm-ok">{project.audit_summary?.safe ?? 0}</span>
             </button>
           ))}
+          {projects.length === 0 && <div className="dm-empty">还没有项目，可以先从左侧加入 repo_code 下的项目。</div>}
         </div>
       </Card>
     </section>
@@ -330,8 +343,6 @@ function ProjectView({
   onSelectScan: (scan: ScanRecord) => void;
 }) {
   const [name, setName] = useState("");
-  const [priorityLimit, setPriorityLimit] = useState("20");
-  const [auditLimit, setAuditLimit] = useState("");
   const [busy, setBusy] = useState(false);
 
   async function create() {
@@ -340,9 +351,7 @@ function ProjectView({
       const scan = await api.createScan({
         project_path: project.project_path,
         name: name.trim() || `扫描 ${new Date().toLocaleString()}`,
-        step: "all",
-        priority_chain_limit: numberOrUndefined(priorityLimit),
-        audit_limit: numberOrUndefined(auditLimit),
+        step: "manual",
       });
       setName("");
       onCreated(scan);
@@ -353,23 +362,21 @@ function ProjectView({
 
   return (
     <section className="dm-stack">
-      <Card title="新建扫描" hint="scan">
+      <Card title="新建扫描" hint="scan space">
         <div className="dm-inline-form">
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="扫描名称，例如：baseline round 1" />
-          <input type="number" min="1" step="1" className="dm-number-input" value={priorityLimit} onChange={(e) => setPriorityLimit(e.target.value)} placeholder="调用链 Top N" />
-          <input type="number" min="1" step="1" className="dm-number-input" value={auditLimit} onChange={(e) => setAuditLimit(e.target.value)} placeholder="审计 Top N，可留空" />
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="扫描名称，例如 baseline round 1" />
           <button className="dm-btn dm-btn-primary" onClick={() => void create()} disabled={busy}>
             <Plus size={15} /> 新建
           </button>
         </div>
-        <p className="dm-muted">调用链 Top N 控制 CallScan 输出到 callscan_chains.priority.jsonl 的优先链数量；审计 Top N 控制 Scanner Audit 实际审计的链数量。</p>
+        <p className="dm-muted">新建扫描只创建一个扫描空间。后续流程为：候选链发现、手动选择候选链创建批次、启动批次审计。</p>
       </Card>
       <Card title="扫描记录" hint="history">
         <div className="dm-table dm-table-scans">
           <div className="dm-tr dm-th">
             <span>名称</span>
             <span>状态</span>
-            <span>调用链</span>
+            <span>候选链</span>
             <span>漏洞</span>
             <span>创建时间</span>
           </div>
@@ -405,7 +412,24 @@ function ScanView({
   setTab: (tab: ScanTab) => void;
   onScanChanged: (scan?: ScanRecord | null) => void | Promise<void>;
 }) {
+  const [selectedCandidateIds, setSelectedCandidateIds] = useState<Set<string>>(new Set());
   const audit = scan.audit_summary ?? EMPTY_AUDIT;
+
+  useEffect(() => {
+    setSelectedCandidateIds(new Set());
+  }, [scan.scan_id]);
+
+  const selectedIds = useMemo(() => Array.from(selectedCandidateIds), [selectedCandidateIds]);
+
+  function toggleCandidate(chainId: string, checked: boolean) {
+    setSelectedCandidateIds((current) => {
+      const next = new Set(current);
+      if (checked) next.add(chainId);
+      else next.delete(chainId);
+      return next;
+    });
+  }
+
   return (
     <section className="dm-stack">
       <div className="dm-scan-head">
@@ -417,7 +441,7 @@ function ScanView({
         <StatusBadge status={scan.status} />
       </div>
       <div className="dm-grid dm-grid-4">
-        <Metric title="调用链条数" value={audit.total_chains || scan.callscan_summary?.candidate_chains || 0} icon={<ListTree size={18} />} />
+        <Metric title="候选调用链" value={audit.total_chains || scan.callscan_summary?.candidate_chains || 0} icon={<ListTree size={18} />} />
         <Metric title="存在漏洞" value={audit.vulnerable} tone="danger" icon={<ShieldAlert size={18} />} />
         <Metric title="不确定" value={audit.uncertain} tone="warn" icon={<AlertTriangle size={18} />} />
         <Metric title="安全" value={audit.safe} tone="ok" icon={<CheckCircle2 size={18} />} />
@@ -428,9 +452,25 @@ function ScanView({
         <TabButton active={tab === "callscan"} onClick={() => setTab("callscan")}>CallScan</TabButton>
         <TabButton active={tab === "audit"} onClick={() => setTab("audit")}>漏洞审计</TabButton>
       </div>
-      {tab === "control" && <ControlPanel project={project} scan={scan} onScanChanged={onScanChanged} />}
+      {tab === "control" && (
+        <ControlPanel
+          project={project}
+          scan={scan}
+          selectedChainIds={selectedIds}
+          onClearSelectedChains={() => setSelectedCandidateIds(new Set())}
+          onScanChanged={onScanChanged}
+        />
+      )}
       {tab === "treescan" && <TreeScanPanel project={project} scan={scan} />}
-      {tab === "callscan" && <CallScanPanel project={project} scan={scan} />}
+      {tab === "callscan" && (
+        <CallScanPanel
+          project={project}
+          scan={scan}
+          selectedIds={selectedCandidateIds}
+          onToggleCandidate={toggleCandidate}
+          onClearSelected={() => setSelectedCandidateIds(new Set())}
+        />
+      )}
       {tab === "audit" && <AuditPanel project={project} scan={scan} />}
     </section>
   );
@@ -439,34 +479,42 @@ function ScanView({
 function ControlPanel({
   project,
   scan,
+  selectedChainIds,
+  onClearSelectedChains,
   onScanChanged,
 }: {
   project: ProjectSummary;
   scan: ScanRecord;
+  selectedChainIds: string[];
+  onClearSelectedChains: () => void;
   onScanChanged: (scan?: ScanRecord | null) => void | Promise<void>;
 }) {
   const [name, setName] = useState(scan.name);
-  const [priorityLimit, setPriorityLimit] = useState(String(scan.priority_chain_limit ?? 20));
-  const [auditLimit, setAuditLimit] = useState(scan.audit_limit == null ? "" : String(scan.audit_limit));
+  const [batchName, setBatchName] = useState("");
+  const [batches, setBatches] = useState<AuditBatch[]>([]);
   const [auditDryRun, setAuditDryRun] = useState(Boolean(scan.audit_dry_run));
   const [busy, setBusy] = useState(false);
   const [runInfo, setRunInfo] = useState<RunInfo | null>(null);
+  const [localError, setLocalError] = useState("");
   const streamRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
     setName(scan.name);
-    setPriorityLimit(String(scan.priority_chain_limit ?? 20));
-    setAuditLimit(scan.audit_limit == null ? "" : String(scan.audit_limit));
     setAuditDryRun(Boolean(scan.audit_dry_run));
     setRunInfo(null);
+    setLocalError("");
+    void refreshBatches();
     return () => streamRef.current?.close();
-  }, [scan.scan_id, scan.name, scan.priority_chain_limit, scan.audit_limit, scan.audit_dry_run]);
+  }, [scan.scan_id, scan.name, scan.audit_dry_run]);
 
   async function saveSettings() {
     setBusy(true);
+    setLocalError("");
     try {
       const next = await persistSettings();
       await onScanChanged(next);
+    } catch (e) {
+      setLocalError(String(e));
     } finally {
       setBusy(false);
     }
@@ -475,36 +523,79 @@ function ControlPanel({
   async function persistSettings() {
     return api.updateScan(scan.scan_id, project.project_path, {
       name,
-      priority_chain_limit: numberOrUndefined(priorityLimit),
-      audit_limit: numberOrNull(auditLimit),
       audit_dry_run: auditDryRun,
     });
   }
 
-  async function start() {
-    setBusy(true);
+  async function refreshBatches() {
     try {
-      // 启动前先保存当前表单值，保证本次扫描使用用户刚输入的 Top N，而不是旧 scan 元数据。
+      const result = await api.batches(scan.scan_id, project.project_path);
+      setBatches(result.items ?? []);
+    } catch {
+      setBatches([]);
+    }
+  }
+
+  async function discover(force = false) {
+    setBusy(true);
+    setLocalError("");
+    try {
       await persistSettings();
-      const run = await api.startScan(scan.scan_id, {
+      const run = await api.discoverScan(scan.scan_id, {
         project_path: project.project_path,
-        priority_chain_limit: numberOrUndefined(priorityLimit),
-        audit_limit: numberOrNull(auditLimit),
-        audit_dry_run: auditDryRun,
+        force_discover: force,
       });
-      setRunInfo({
-        run_id: run.run_id,
-        scan_id: run.scan_id,
-        project_path: project.project_path,
-        status: run.status,
-        cmd: run.cmd,
-        priority_chain_limit: run.priority_chain_limit,
-        audit_limit: run.audit_limit,
-        audit_dry_run: run.audit_dry_run,
-        last_message: "扫描进程已启动",
-      });
+      setRunInfo({ ...run, project_path: project.project_path, last_message: "候选链发现已启动" });
       attachStream(run.run_id);
       await onScanChanged();
+    } catch (e) {
+      setLocalError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function createBatch() {
+    if (selectedChainIds.length === 0) {
+      setLocalError("请先在 CallScan 页面勾选候选链，再创建审计批次。");
+      return;
+    }
+    setBusy(true);
+    setLocalError("");
+    try {
+      await persistSettings();
+      const batch = await api.createBatch(scan.scan_id, {
+        project_path: project.project_path,
+        name: batchName.trim() || undefined,
+        audit_limit: selectedChainIds.length,
+        audit_per_type: 0,
+        selected_chain_ids: selectedChainIds,
+        exclude_completed: false,
+      });
+      setBatchName("");
+      onClearSelectedChains();
+      setBatches((items) => [batch, ...items.filter((item) => item.batch_id !== batch.batch_id)]);
+      await onScanChanged();
+    } catch (e) {
+      setLocalError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function startBatch(batchId: string) {
+    setBusy(true);
+    setLocalError("");
+    try {
+      const run = await api.startBatch(scan.scan_id, batchId, {
+        project_path: project.project_path,
+        audit_dry_run: auditDryRun,
+      });
+      setRunInfo({ ...run, project_path: project.project_path, last_message: `批次 ${batchId} 审计已启动` });
+      attachStream(run.run_id);
+      await onScanChanged();
+    } catch (e) {
+      setLocalError(String(e));
     } finally {
       setBusy(false);
     }
@@ -512,9 +603,12 @@ function ControlPanel({
 
   async function stop() {
     setBusy(true);
+    setLocalError("");
     try {
       const result = await api.stopScan(scan.scan_id, project.project_path);
       if (result.ok) await onScanChanged();
+    } catch (e) {
+      setLocalError(String(e));
     } finally {
       setBusy(false);
     }
@@ -531,61 +625,92 @@ function ControlPanel({
     const es = new EventSource(`/api/runs/${encodeURIComponent(runId)}/stream`);
     streamRef.current = es;
     es.onmessage = (ev) => {
-      const msg = JSON.parse(ev.data);
-      if (msg.type === "status") {
-        setRunInfo(msg as RunInfo);
-      }
-      if (msg.type === "end") {
-        es.close();
-        void onScanChanged();
+      try {
+        const msg = JSON.parse(ev.data);
+        if (msg.type === "status") setRunInfo(msg as RunInfo);
+        if (msg.type === "end") {
+          es.close();
+          void refreshBatches();
+          void onScanChanged();
+        }
+      } catch {
+        setLocalError("运行状态解析失败，请查看后端 console.log。");
       }
     };
+    es.onerror = () => setRunInfo((current) => current ? { ...current, last_message: "状态流中断，请稍后刷新查看结果。" } : current);
   }
 
   return (
-    <Card title="扫描控制" hint="run">
-      <div className="dm-control-grid">
-        <label>
-          <span>扫描名称</span>
-          <input value={name} onChange={(e) => setName(e.target.value)} />
-        </label>
-        <label>
-          <span>调用链 Top N</span>
-          <input type="number" min="1" step="1" className="dm-number-input" value={priorityLimit} onChange={(e) => setPriorityLimit(e.target.value)} />
-        </label>
-        <label>
-          <span>审计 Top N</span>
-          <input type="number" min="1" step="1" className="dm-number-input" value={auditLimit} onChange={(e) => setAuditLimit(e.target.value)} placeholder="留空=全部" />
-        </label>
-        <label className="dm-checkbox">
-          <input type="checkbox" checked={auditDryRun} onChange={(e) => setAuditDryRun(e.target.checked)} />
-          <span>仅生成审计任务，不调用 LLM</span>
-        </label>
-      </div>
-      <div className="dm-inline-form">
-        <button className="dm-btn" onClick={() => void saveSettings()} disabled={busy}>保存配置</button>
-        {scan.status === "running" ? (
-          <button className="dm-btn dm-btn-danger" onClick={() => void stop()} disabled={busy}><Square size={14} /> 停止</button>
-        ) : (
-          <button className="dm-btn dm-btn-primary" onClick={() => void start()} disabled={busy}><Play size={14} /> 开始扫描</button>
-        )}
-        <button className="dm-btn dm-btn-ghost danger-text" onClick={() => void remove()}><Trash2 size={14} /> 删除</button>
-      </div>
-      <div className="dm-run-summary">
-        <Info label="当前状态" value={statusLabel(scan.status)} />
-        <Info label="调用链 Top N" value={String(scan.priority_chain_limit ?? numberOrUndefined(priorityLimit) ?? 20)} />
-        <Info label="审计 Top N" value={scan.audit_limit == null ? "全部" : String(scan.audit_limit)} />
-        <Info label="最后运行" value={scan.last_run_id || "尚未运行"} />
-      </div>
-      <RunStatusPanel runInfo={runInfo} scan={scan} />
-      <p className="dm-muted">控制台日志已取消展示；这里只显示结构化运行状态。失败时会给出最后错误和 console.log 文件路径。</p>
-    </Card>
+    <>
+      <Card title="扫描控制" hint="manual workflow">
+        <div className="dm-control-grid">
+          <label>
+            <span>扫描名称</span>
+            <input value={name} onChange={(e) => setName(e.target.value)} />
+          </label>
+          <label className="dm-checkbox">
+            <input type="checkbox" checked={auditDryRun} onChange={(e) => setAuditDryRun(e.target.checked)} />
+            <span>仅生成审计任务，不调用 LLM</span>
+          </label>
+        </div>
+        <div className="dm-inline-form">
+          <button className="dm-btn" onClick={() => void saveSettings()} disabled={busy}>保存名称</button>
+          <button className="dm-btn" onClick={() => void discover(false)} disabled={busy || scan.status === "running"}>
+            <RefreshCw size={14} /> 候选链发现
+          </button>
+          <button className="dm-btn" onClick={() => void discover(true)} disabled={busy || scan.status === "running"}>重新发现</button>
+          {scan.status === "running" && (
+            <button className="dm-btn dm-btn-danger" onClick={() => void stop()} disabled={busy}>
+              <Square size={14} /> 停止
+            </button>
+          )}
+          <button className="dm-btn dm-btn-ghost danger-text" onClick={() => void remove()}>
+            <Trash2 size={14} /> 删除
+          </button>
+        </div>
+        <div className="dm-run-summary">
+          <Info label="当前状态" value={statusLabel(scan.status)} />
+          <Info label="候选来源" value={candidateSourceLabel(scan.callscan_summary?.candidate_source)} />
+          <Info label="候选链" value={String(scan.callscan_summary?.candidate_chains ?? 0)} />
+          <Info label="最后运行" value={scan.last_run_id || "尚未运行"} />
+        </div>
+        <RunStatusPanel runInfo={runInfo} scan={scan} />
+        {localError && <div className="dm-banner-error">{localError}</div>}
+        <p className="dm-muted">工作台流程固定为：新建扫描、候选链发现、在 CallScan 中勾选候选链、创建审计批次、启动批次审计。</p>
+      </Card>
+
+      <Card title="审计批次" hint="selected chains">
+        <div className="dm-inline-form">
+          <input value={batchName} onChange={(e) => setBatchName(e.target.value)} placeholder="批次名称，例如 XSS coverage round 1" />
+          <button className="dm-btn dm-btn-primary" onClick={() => void createBatch()} disabled={busy || selectedChainIds.length === 0}>
+            <Plus size={14} /> 创建批次
+          </button>
+        </div>
+        <p className="dm-muted">当前已选择 {selectedChainIds.length} 条候选链。手动选择允许重复审计已完成的调用链。</p>
+        <div className="dm-list">
+          {batches.map((batch) => (
+            <div className="dm-chain-row" key={batch.batch_id}>
+              <span className="dm-index">{batch.queue_count ?? 0}</span>
+              <div>
+                <strong>{batch.name || batch.batch_id}</strong>
+                <code>{batch.batch_id}</code>
+              </div>
+              <span className="dm-pill">{statusLabel(batch.status)}</span>
+              <button className="dm-btn dm-btn-small" onClick={() => void startBatch(batch.batch_id)} disabled={busy || scan.status === "running"}>
+                <Play size={13} /> 审计
+              </button>
+            </div>
+          ))}
+          {batches.length === 0 && <div className="dm-empty">还没有审计批次。先完成候选链发现，并在 CallScan 页面勾选候选链。</div>}
+        </div>
+      </Card>
+    </>
   );
 }
 
 function RunStatusPanel({ runInfo, scan }: { runInfo: RunInfo | null; scan: ScanRecord }) {
   const status = runInfo?.status ?? scan.status;
-  const message = runInfo?.error_message || runInfo?.last_message || (status === "running" ? "扫描运行中" : "等待启动");
+  const message = runInfo?.error_message || runInfo?.last_message || (status === "running" ? "任务运行中" : "等待启动");
   const cmd = runInfo?.cmd?.join(" ");
   return (
     <div className={`dm-run-panel ${status}`}>
@@ -594,9 +719,8 @@ function RunStatusPanel({ runInfo, scan }: { runInfo: RunInfo | null; scan: Scan
         <span>{message}</span>
       </div>
       <div className="dm-run-panel-meta">
-        <span>调用链 Top N：{runInfo?.priority_chain_limit ?? scan.priority_chain_limit ?? 20}</span>
-        <span>审计 Top N：{runInfo?.audit_limit ?? scan.audit_limit ?? "全部"}</span>
         {runInfo?.elapsed_seconds != null && <span>耗时：{runInfo.elapsed_seconds}s</span>}
+        {runInfo?.run_id && <span>运行：{runInfo.run_id}</span>}
       </div>
       {cmd && <code>{cmd}</code>}
       {runInfo?.error_message && runInfo.log_path && <small>日志文件：{runInfo.log_path}</small>}
@@ -613,13 +737,13 @@ function TreeScanPanel({ project, scan }: { project: ProjectSummary; scan: ScanR
   const stack = (profile?.technology_stack as Record<string, unknown>) ?? {};
   return (
     <Card title="项目理解" hint="treescan_agent.json">
-      {loading && <div className="dm-muted">加载 TreeScan 画像中...</div>}
+      {loading && <div className="dm-muted">加载 TreeScan 项目画像中...</div>}
       {error && <div className="dm-banner-error">{error}</div>}
       {profile && (
         <div className="dm-profile-grid">
           <Info label="项目名称" value={text(profile.project_name)} />
           <Info label="项目类型" value={text(profile.project_type)} />
-          <Info label="功能" value={text(profile.project_function || profile.project_summary || profile.summary)} wide />
+          <Info label="功能摘要" value={text(profile.project_function || profile.project_summary || profile.summary)} wide />
           <Info label="后端" value={listText(stack.backend)} />
           <Info label="前端" value={listText(stack.frontend)} />
           <Info label="数据库" value={listText(stack.database || stack.data)} />
@@ -630,33 +754,155 @@ function TreeScanPanel({ project, scan }: { project: ProjectSummary; scan: ScanR
   );
 }
 
-function CallScanPanel({ project, scan }: { project: ProjectSummary; scan: ScanRecord }) {
-  const key = `${project.project_path}:${scan.scan_id}:priority-chains`;
-  const { data, error, loading } = useArtifactCache(key, () =>
-    api.artifactJsonl<Record<string, unknown>>(project.project_path, "callscan_chains.priority.jsonl", scan.scan_id, 0, 60)
+function CallScanPanel({
+  project,
+  scan,
+  selectedIds,
+  onToggleCandidate,
+  onClearSelected,
+}: {
+  project: ProjectSummary;
+  scan: ScanRecord;
+  selectedIds: Set<string>;
+  onToggleCandidate: (chainId: string, checked: boolean) => void;
+  onClearSelected: () => void;
+}) {
+  const pageSize = 50;
+  const [offset, setOffset] = useState(0);
+  const [vulnerabilityType, setVulnerabilityType] = useState("");
+  const [severity, setSeverity] = useState("");
+  const [data, setData] = useState<CandidateResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    api.candidates(scan.scan_id, project.project_path, {
+      offset,
+      limit: pageSize,
+      vulnerability_type: vulnerabilityType || undefined,
+      severity: severity || undefined,
+    })
+      .then((result) => {
+        if (!cancelled) setData(result);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(String(e));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [project.project_path, scan.scan_id, offset, vulnerabilityType, severity]);
+
+  function clearFilters() {
+    setVulnerabilityType("");
+    setSeverity("");
+    setOffset(0);
+  }
+
+  const total = data?.total ?? 0;
+  const source = data?.source ?? scan.callscan_summary?.candidate_source ?? "none";
+  const selectedCount = selectedIds.size;
+  const vulnerabilityOptions = useMemo(
+    () => sortedFacetEntries(data?.facets?.vulnerability_types ?? {}),
+    [data?.facets?.vulnerability_types]
   );
+  const severityOptions = useMemo(
+    () => sortedRiskEntries(data?.facets?.risk_levels ?? {}),
+    [data?.facets?.risk_levels]
+  );
+
   return (
-    <Card title="调用链候选" hint="callscan_chains.priority.jsonl">
-      {loading && <div className="dm-muted">加载调用链候选中...</div>}
-      {error && <div className="dm-banner-error">{error}</div>}
-      {data && (
-        <>
-          <div className="dm-muted">已分页读取 {data.items.length} / {data.total} 条，避免一次性渲染大 JSONL。</div>
-          <div className="dm-list">
-            {data.items.map((item, index) => (
-              <div className="dm-chain-row" key={index}>
-                <span className="dm-index">{index + 1}</span>
-                <div>
-                  <strong>{vulnerabilityLabel(text(item.vulnerability_type || (item.sink as any)?.vulnerability_type || item.sink || item.sink_name || "sink hit"))}</strong>
-                  <code>{text(item.file || item.path || item.location || item.chain_id || item.path_id)}</code>
-                </div>
-                <span className="dm-pill">{text((item.rank as any)?.priority || item.priority || item.severity || "candidate")}</span>
-              </div>
+    <section className="dm-stack">
+      <Card title="候选调用链" hint={source === "all" ? "callscan_chains.all.jsonl" : source === "priority" ? "callscan_chains.priority.jsonl" : "candidate pool"}>
+        <div className="dm-run-summary">
+          <Info label="候选来源" value={candidateSourceLabel(source)} />
+          <Info label="候选链总数" value={String(scan.callscan_summary?.candidate_chains ?? total)} />
+          <Info label="已审计记录" value={String(scan.callscan_summary?.completed ?? 0)} />
+          <Info label="已选择" value={String(selectedCount)} />
+        </div>
+        <div className="dm-inline-form">
+          <select value={severity} onChange={(e) => { setSeverity(e.target.value); setOffset(0); }}>
+            <option value="">全部风险</option>
+            {severityOptions.map(([name, count]) => (
+              <option key={name} value={name}>{severityLabel(name)}（{count}）</option>
             ))}
-          </div>
-        </>
-      )}
-    </Card>
+          </select>
+          <select value={vulnerabilityType} onChange={(e) => { setVulnerabilityType(e.target.value); setOffset(0); }}>
+            <option value="">全部漏洞类型</option>
+            {vulnerabilityOptions.map(([name, count]) => (
+              <option key={name} value={name}>{vulnerabilityLabel(name)}（{count}）</option>
+            ))}
+          </select>
+          {(vulnerabilityType || severity) && <button className="dm-btn dm-btn-ghost" onClick={clearFilters}>清空筛选</button>}
+          {selectedCount > 0 && <button className="dm-btn dm-btn-ghost" onClick={onClearSelected}>清除选择</button>}
+        </div>
+        <p className="dm-muted">勾选候选链后，到“扫描控制”页创建审计批次。手动选择不会因为完成池记录而被跳过。</p>
+
+        {loading && <div className="dm-muted">加载候选链中...</div>}
+        {error && <div className="dm-banner-error">{error}</div>}
+        {!loading && !error && source === "none" && (
+          <div className="dm-empty">尚未执行候选链发现。请先在“扫描控制”页点击“候选链发现”。</div>
+        )}
+        {data && source !== "none" && (
+          <>
+            <div className="dm-muted">当前显示 {data.items.length} / {data.total} 条候选链。</div>
+            <div className="dm-list">
+              {data.items.map((item, index) => (
+                <CandidateRow
+                  key={item.chain_id || item.path_id || index}
+                  item={item}
+                  index={data.offset + index + 1}
+                  selected={selectedIds.has(item.chain_id)}
+                  onToggle={(checked) => onToggleCandidate(item.chain_id, checked)}
+                />
+              ))}
+              {data.items.length === 0 && <div className="dm-empty">没有匹配的候选链。</div>}
+            </div>
+            <div className="dm-inline-form">
+              <button className="dm-btn" disabled={offset <= 0} onClick={() => setOffset(Math.max(offset - pageSize, 0))}>上一页</button>
+              <span className="dm-muted">{offset + 1} - {Math.min(offset + pageSize, total)} / {total}</span>
+              <button className="dm-btn" disabled={offset + pageSize >= total} onClick={() => setOffset(offset + pageSize)}>下一页</button>
+            </div>
+          </>
+        )}
+      </Card>
+    </section>
+  );
+}
+
+function CandidateRow({
+  item,
+  index,
+  selected,
+  onToggle,
+}: {
+  item: CandidateChain;
+  index: number;
+  selected: boolean;
+  onToggle: (checked: boolean) => void;
+}) {
+  const location = [item.file, item.line ? `:${item.line}` : ""].filter(Boolean).join("");
+  return (
+    <div className="dm-chain-row">
+      <label className="dm-index" title="选择候选链">
+        <input type="checkbox" checked={selected} onChange={(e) => onToggle(e.target.checked)} />
+      </label>
+      <div>
+        <strong>{vulnerabilityLabel(item.vulnerability_type || "unknown")}</strong>
+        <code>{location || item.chain_id || item.path_id || "-"}</code>
+        <span className="dm-muted">
+          {item.language || "unknown"} · {item.function || "sink"} · 风险分 {item.risk_score ?? 0} · #{index}
+        </span>
+      </div>
+      <span className="dm-pill">{severityLabel(item.severity)} · {item.completed ? "已审计" : "未审计"}</span>
+      {(item.batches?.length ?? 0) > 0 && <span className="dm-pill">批次 {item.batches?.length}</span>}
+    </div>
   );
 }
 
@@ -687,6 +933,7 @@ function AuditPanel({ project, scan }: { project: ProjectSummary; scan: ScanReco
     const fromRows = (data?.findings ?? []).map((item) => displayVulnerabilityType(item)).filter((item) => item !== "unknown");
     return Array.from(new Set([...fromScan, ...fromCurrent, ...fromRows].filter(Boolean))).sort();
   }, [data?.findings, scan.audit_summary, summary.by_vulnerability]);
+
   return (
     <section className="dm-stack">
       <Card title="审计概要" hint="audit_agent.json">
@@ -727,7 +974,7 @@ function AuditPanel({ project, scan }: { project: ProjectSummary; scan: ScanReco
             <option value="medium">中</option>
             <option value="low">低</option>
             <option value="info">信息</option>
-            <option value="unknown">风险未标注</option>
+            <option value="unknown">风险未知</option>
           </select>
           <select value={vulnerability} onChange={(e) => setVulnerability(e.target.value)}>
             <option value="">全部漏洞类型</option>
@@ -764,7 +1011,7 @@ function AuditPanel({ project, scan }: { project: ProjectSummary; scan: ScanReco
             {data.findings.map((item, index) => (
               <div className="dm-audit-row" key={text(item.chain_id || index)}>
                 <div className="dm-audit-main">
-                  <strong>{vulnerabilityLabel(displayVulnerabilityType(item))}</strong>
+                  <strong>{text(item.title) !== "-" ? text(item.title) : vulnerabilityLabel(displayVulnerabilityType(item))}</strong>
                   <span>{text(item.principle || item.fix_suggestion || item.missing_info || "无摘要")}</span>
                   <code>{text(item.chain_id || item.analysis_id)}</code>
                 </div>
@@ -772,7 +1019,7 @@ function AuditPanel({ project, scan }: { project: ProjectSummary; scan: ScanReco
                 <span className="dm-pill">潜在风险：{severityLabel(item.severity)}</span>
               </div>
             ))}
-            {data.findings.length === 0 && <div className="dm-empty">没有匹配的审计结果</div>}
+            {data.findings.length === 0 && <div className="dm-empty">没有匹配的审计结果。</div>}
           </div>
         )}
       </Card>
@@ -844,7 +1091,7 @@ function Info({ label, value, wide }: { label: string; value: string; wide?: boo
   return (
     <div className={`dm-info ${wide ? "wide" : ""}`}>
       <span>{label}</span>
-      <strong>{value || "unknown"}</strong>
+      <strong>{value || "-"}</strong>
     </div>
   );
 }
@@ -872,10 +1119,15 @@ function formatDate(value?: string | null) {
 }
 
 function text(value: unknown): string {
-  if (value == null || value === "") return "unknown";
+  if (value == null || value === "") return "-";
   if (Array.isArray(value)) return value.map(text).join(", ");
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
+}
+
+function listText(value: unknown) {
+  const result = text(value);
+  return result === "[]" ? "-" : result;
 }
 
 function displayVulnerabilityType(item: Record<string, unknown>): string {
@@ -884,8 +1136,21 @@ function displayVulnerabilityType(item: Record<string, unknown>): string {
   return text(item.vulnerability_type || item.vuln_type || item.type || sink?.vulnerability_type || sink?.vulnerability || item.cwe_guess);
 }
 
+function sortedFacetEntries(values: Record<string, number>): [string, number][] {
+  return Object.entries(values)
+    .filter(([name]) => Boolean(name) && name !== "unknown")
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+}
+
+function sortedRiskEntries(values: Record<string, number>): [string, number][] {
+  const order = new Map(["critical", "high", "medium", "low", "info", "unknown"].map((name, index) => [name, index]));
+  return Object.entries(values)
+    .filter(([name]) => Boolean(name))
+    .sort((a, b) => (order.get(a[0]) ?? 99) - (order.get(b[0]) ?? 99) || b[1] - a[1]);
+}
+
 function vulnerabilityLabel(value: string): string {
-  const key = value.toLowerCase().replace(/[\s-]+/g, "_");
+  const key = String(value || "unknown").toLowerCase().replace(/[\s-]+/g, "_");
   return ({
     sql_injection: "SQL 注入",
     sql: "SQL 注入",
@@ -955,25 +1220,6 @@ function vulnerabilityLabel(value: string): string {
   } as Record<string, string>)[key] ?? value.replace(/_/g, " ");
 }
 
-function numberOrUndefined(value: string): number | undefined {
-  const trimmed = value.trim();
-  if (!trimmed) return undefined;
-  const parsed = Number(trimmed);
-  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : undefined;
-}
-
-function numberOrNull(value: string): number | null {
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  const parsed = Number(trimmed);
-  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : null;
-}
-
-function listText(value: unknown) {
-  const result = text(value);
-  return result === "[]" ? "unknown" : result;
-}
-
 function verdictLabel(value: unknown): string {
   const verdict = String(value ?? "").toLowerCase();
   if (verdict.includes("vulnerable") && !verdict.includes("not")) return "存在漏洞";
@@ -1001,4 +1247,11 @@ function verdictClass(value: unknown) {
   if (verdict.includes("vulnerable") && !verdict.includes("not")) return "danger";
   if (verdict.includes("safe") || verdict.includes("not_vulnerable")) return "ok";
   return "warn";
+}
+
+function candidateSourceLabel(value: unknown): string {
+  const source = String(value ?? "none");
+  if (source === "all") return "全量候选池";
+  if (source === "priority") return "旧优先队列";
+  return "尚未生成";
 }
