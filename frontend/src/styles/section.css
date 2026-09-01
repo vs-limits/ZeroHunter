@@ -1,0 +1,301 @@
+/* ============================================================
+ * Section 容器（参考 Ant Design Pro Card / GitHub Settings）
+ * ============================================================ */
+
+.dm-section {
+  background: var(--color-bg-container);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  margin-bottom: 16px;
+  /* 不再用 overflow: hidden；改由 head/footer 自身圆角承担形状 */
+  transition: border-color 0.15s ease;
+}
+.dm-section:hover {
+  border-color: var(--color-border-secondary);
+}
+.dm-section-borderless {
+  border: 0;
+  background: transparent;
+}
+
+.dm-section-danger {
+  border-color: var(--color-error-border);
+  background: var(--color-bg-container);
+}
+.dm-section-danger .dm-section-head {
+  background: var(--color-error-bg);
+  color: var(--color-error);
+  border-bottom-color: var(--color-error-border);
+}
+.dm-section-danger .dm-section-title {
+  color: var(--color-error);
+}
+
+.dm-section-head {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--color-split);
+  background: linear-gradient(180deg, var(--color-bg-container), var(--color-bg-soft));
+  border-radius: calc(var(--radius-lg) - 1px) calc(var(--radius-lg) - 1px) 0 0;
+}
+
+.dm-section-titles {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.dm-section-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 8px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+.dm-section-hint {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--color-text-tertiary);
+  letter-spacing: 0;
+  word-break: break-all;
+}
+.dm-section-desc {
+  margin-top: 4px;
+  font-size: 12.5px;
+  color: var(--color-text-secondary);
+  line-height: 1.55;
+}
+.dm-section-extra {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  max-width: 100%;
+}
+
+.dm-section-body {
+  padding: 16px 20px;
+  min-width: 0;
+}
+
+.dm-section-footer {
+  padding: 10px 20px;
+  background: var(--color-bg-soft);
+  border-top: 1px solid var(--color-split);
+  border-radius: 0 0 calc(var(--radius-lg) - 1px) calc(var(--radius-lg) - 1px);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.dm-section-footer .dm-spacer {
+  flex: 1;
+}
+
+/* ============================================================
+ * Descriptions 网格（只读 key-value）
+ * ============================================================ */
+
+.dm-descrip-grid {
+  display: grid;
+  gap: 12px 20px;
+  margin: 0;
+}
+.dm-descrip-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.dm-descrip-item.full {
+  grid-column: 1 / -1;
+}
+.dm-descrip-item dt {
+  font-size: 11.5px;
+  color: var(--color-text-tertiary);
+  letter-spacing: 0.02em;
+}
+.dm-descrip-item dd {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text);
+  word-break: break-word;
+  line-height: 1.55;
+}
+.dm-descrip-empty {
+  color: var(--color-text-quaternary);
+}
+
+/* ============================================================
+ * 表单行（固定左标签 + 描述 + 右控件）
+ * ----- 用 .dm-srow 命名空间避免与旧的 .dm-form-row 冲突 -----
+ * ============================================================ */
+
+.dm-srow {
+  display: grid;
+  grid-template-columns: 168px minmax(0, 1fr);
+  gap: 18px;
+  padding: 10px 0;
+  border-bottom: 1px solid transparent;
+  align-items: center;
+  min-width: 0;
+}
+.dm-section-body > .dm-srow + .dm-srow {
+  border-top: 1px solid var(--color-split);
+}
+.dm-srow-top {
+  align-items: flex-start;
+}
+.dm-srow-label {
+  font-size: 13px;
+  color: var(--color-text);
+  padding-top: 4px;
+  min-width: 0;
+  word-break: break-word;
+}
+.dm-srow-label label {
+  font-weight: 500;
+}
+.dm-srow-desc {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--color-text-tertiary);
+  line-height: 1.5;
+  word-break: break-word;
+}
+.dm-required {
+  color: var(--color-error);
+  margin-left: 2px;
+}
+.dm-srow-control {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+.dm-srow-control > input,
+.dm-srow-control > select,
+.dm-srow-control > textarea {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.dm-srow-control textarea {
+  height: auto;
+  padding: 8px 11px;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+@media (max-width: 720px) {
+  .dm-srow {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+}
+
+/* 模式卡 */
+.dm-mode-grid {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+.dm-mode-card {
+  display: flex;
+  gap: 10px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-container);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+.dm-mode-card:hover {
+  border-color: var(--color-primary-border);
+}
+.dm-mode-card.on {
+  border-color: var(--color-primary);
+  background: var(--color-primary-bg);
+}
+.dm-mode-card input { width: 16px; height: 16px; margin-top: 2px; flex-shrink: 0; }
+.dm-mode-card-title {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+.dm-mode-card-desc {
+  font-size: 11.5px;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+
+/* ============================================================
+ * Statistic（KPI 卡）
+ * ============================================================ */
+.dm-stat {
+  background: var(--color-bg-container);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  position: relative;
+  overflow: hidden;
+}
+.dm-stat::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--stat-bar, var(--color-text-quaternary));
+}
+.dm-stat-primary { --stat-bar: var(--color-primary); }
+.dm-stat-success { --stat-bar: var(--color-success); }
+.dm-stat-warning { --stat-bar: var(--color-warning); }
+.dm-stat-danger  { --stat-bar: var(--color-error); }
+.dm-stat-muted   { --stat-bar: var(--color-text-quaternary); }
+
+.dm-stat-num {
+  font-family: var(--mono);
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.1;
+  color: var(--color-text);
+}
+.dm-stat-cap {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+.dm-stat-hint {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--color-text-quaternary);
+}
+
+/* 4 列 KPI 简易栅格 */
+.dm-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+/* 内联 checkbox */
+.dm-inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--color-text-secondary);
+}
+.dm-inline-check input { width: 14px; height: 14px; }

@@ -1,0 +1,169 @@
+/* —— 文本源码块 —— */
+.dm-source-block {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.65;
+  background: var(--color-bg-soft);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin: 0;
+  max-height: 600px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--color-text);
+}
+
+/* —— 编辑器 —— */
+.dm-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.dm-editor-area {
+  width: 100%;
+  min-height: 480px;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.7;
+  padding: 14px 16px;
+  border: 1px solid var(--color-border-secondary);
+  border-radius: var(--radius);
+  resize: vertical;
+  background: var(--color-bg-container);
+  color: var(--color-text);
+  height: auto;
+  tab-size: 4;
+  white-space: pre;
+  overflow: auto;
+}
+.dm-editor-area.lang-python {
+  font-size: 13px;
+}
+.dm-editor-area:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(22, 119, 255, 0.1);
+}
+
+.dm-editor-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.dm-editor-reason {
+  flex: 1;
+  min-width: 220px;
+}
+.dm-editor-stat {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  margin-right: 4px;
+}
+
+/* —— 历史版本视图 —— */
+.dm-history-layout {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 16px;
+  align-items: stretch;
+  min-height: 360px;
+}
+@media (max-width: 1100px) {
+  .dm-history-layout { grid-template-columns: 1fr; }
+}
+
+.dm-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg-container);
+  padding: 6px;
+  max-height: 600px;
+  overflow: auto;
+}
+.dm-history-item {
+  width: 100%;
+  text-align: left;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  position: relative;
+}
+.dm-history-item:hover {
+  background: var(--color-bg-soft);
+  border-color: var(--color-border);
+}
+.dm-history-item.active {
+  background: var(--color-primary-bg);
+  border-color: var(--color-primary-border);
+}
+.dm-history-item-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 4px;
+}
+.dm-history-version {
+  font-family: var(--mono);
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--color-text);
+}
+.dm-history-item.active .dm-history-version {
+  color: var(--color-primary);
+}
+.dm-history-size {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+.dm-history-time {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--color-text-tertiary);
+}
+.dm-history-reason {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.dm-history-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg-container);
+  padding: 10px 12px;
+  max-height: 600px;
+  overflow: hidden;
+}
+.dm-history-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed var(--color-split);
+}
+.dm-history-detail .dm-source-block {
+  flex: 1;
+  margin-top: 4px;
+  max-height: none;
+}

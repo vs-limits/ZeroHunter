@@ -1,0 +1,81 @@
+/* 目录树视图 */
+.dm-card.dm-card-tree {
+  --card-bar: var(--t-tree);
+  border-left: 3px solid var(--t-tree);
+}
+
+.dm-tree-card {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.7;
+  padding: 16px 20px;
+}
+.dm-tree-folder {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--color-text);
+  cursor: pointer;
+}
+.dm-tree-folder:hover { background: var(--color-bg-soft); }
+.dm-tree-caret {
+  display: inline-block;
+  width: 10px;
+  color: var(--t-tree);
+  transition: transform 0.1s ease;
+  font-size: 10px;
+  opacity: 0.75;
+}
+.dm-tree-caret.open { transform: rotate(90deg); }
+.dm-tree-folder-name {
+  font-weight: 500;
+  color: var(--color-text);
+}
+.dm-tree-meta {
+  color: var(--color-text-quaternary);
+  font-size: 11px;
+  margin-left: 6px;
+}
+.dm-tree-children {
+  margin-left: 14px;
+  border-left: 1px dashed var(--color-split);
+  padding: 2px 0 2px 6px;
+}
+.dm-tree-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  padding: 4px 0 6px 16px;
+}
+.dm-tree-file {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  padding: 1px 8px;
+  border-radius: 3px;
+  background: var(--color-bg-soft);
+}
+.dm-tree-binary {
+  padding: 4px 0 4px 16px;
+  font-size: 11px;
+  color: var(--color-text-quaternary);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.dm-tree-ext {
+  background: var(--color-bg-soft);
+  border-radius: 9px;
+  padding: 0 8px;
+  height: 18px;
+  line-height: 18px;
+  border: 1px solid var(--color-border);
+  font-family: var(--mono);
+  font-size: 11px;
+}

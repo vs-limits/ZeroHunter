@@ -1,16 +1,19 @@
 # DefectMine local repositories and scan artifacts
+repo/
 repo_code/
 **/.defectmine/
 
 # Local tool/cache data
 .tldr/cache/
 ripgrep/
+**/target/
 
 # Secrets and local environment files
 .env
 .env.*
 !.env.example
 backend/app/config/.env
+backend/app/config/llms.json
 
 # Python
 __pycache__/
@@ -40,6 +43,15 @@ backend-api.out.log
 backend-api.err.log
 frontend-dev.out.log
 frontend-dev.err.log
+**/.history/
+
+# Generated reports, exports, and local scratch files
+outputs/
+reports/
+tmp_*/
+tmp_*.pdf
+tmp_*.png
+*_cookies*.txt
 
 # IDE / editor / OS
 .vscode/

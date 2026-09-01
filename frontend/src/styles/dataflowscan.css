@@ -1,0 +1,12 @@
+/* DataFlowScan 视图 */
+.dm-card.dm-card-dataflow {
+  --card-bar: var(--t-dataflow);
+  border-left: 3px solid var(--t-dataflow);
+}
+
+.dm-dataflow-mini {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}

@@ -1,0 +1,118 @@
+.dm-queue-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dm-queue-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-container);
+  color: var(--color-text-secondary);
+  padding: 4px 12px;
+  height: 28px;
+  border-radius: 14px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.dm-queue-chip:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+.dm-queue-chip.active {
+  border-color: var(--color-primary);
+  background: var(--color-primary-bg);
+  color: var(--color-primary);
+}
+.dm-queue-chip-count {
+  background: var(--color-bg-soft);
+  border-radius: 8px;
+  padding: 0 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  min-width: 18px;
+  text-align: center;
+}
+.dm-queue-chip.active .dm-queue-chip-count {
+  background: var(--color-bg-container);
+  color: var(--color-primary);
+}
+
+/* 表格 */
+.dm-queue-table {
+  font-size: 13px;
+}
+.dm-queue-table th,
+.dm-queue-table td {
+  padding: 8px 10px;
+  vertical-align: middle;
+}
+
+.dm-queue-name-btn {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--color-text);
+  cursor: pointer;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.dm-queue-name-btn:hover {
+  color: var(--color-primary);
+}
+.dm-queue-target {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  background: var(--color-bg-soft);
+  border: 1px solid var(--color-border);
+  padding: 0 6px;
+  border-radius: 8px;
+}
+.dm-queue-id {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--color-text-quaternary);
+  margin-top: 2px;
+}
+
+.dm-queue-progress {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.dm-queue-step {
+  font-size: 11px;
+  padding: 1px 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-soft);
+  color: var(--color-text-tertiary);
+  border-radius: 10px;
+}
+.dm-queue-step.done {
+  background: var(--color-success-bg);
+  color: var(--color-success);
+  border-color: var(--color-success-border);
+}
+.dm-queue-step.running {
+  background: var(--color-primary-bg);
+  color: var(--color-primary);
+  border-color: var(--color-primary-border);
+  animation: dm-queue-step-pulse 1.2s ease-in-out infinite;
+}
+@keyframes dm-queue-step-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(22, 119, 255, 0.35); }
+  50% { box-shadow: 0 0 0 4px rgba(22, 119, 255, 0); }
+}
+
+.dm-queue-actions {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}

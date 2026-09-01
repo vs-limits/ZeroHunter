@@ -1,0 +1,88 @@
+/* 目录画像视图 */
+.dm-card.dm-card-treescan {
+  --card-bar: var(--t-treescan);
+}
+
+.dm-pf-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px 24px;
+  margin-bottom: 14px;
+}
+.dm-pf-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.dm-pf-value {
+  font-size: 13px;
+  color: var(--color-text);
+  font-family: var(--mono);
+  word-break: break-word;
+  line-height: 1.55;
+}
+.dm-pf-summary {
+  font-size: 13px;
+  color: var(--color-text);
+  line-height: 1.7;
+  padding: 10px 12px;
+  background: var(--color-bg-soft);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.dm-pf-notes {
+  margin: 6px 0 0;
+  padding-left: 20px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  font-family: var(--sans);
+}
+.dm-pf-notes li { margin: 2px 0; }
+
+.dm-pf-pairs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px 18px;
+}
+.dm-pf-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.dm-pf-tag {
+  background: var(--color-primary-bg);
+  color: var(--color-primary);
+  border: 1px solid var(--color-primary-border);
+  padding: 1px 9px;
+  height: 22px;
+  line-height: 20px;
+  border-radius: 11px;
+  font-size: 12px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+}
+
+.dm-sync-field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+  margin: 14px 0 18px;
+}
+.dm-sync-field-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-soft);
+  color: var(--color-text);
+  font-size: 13px;
+  cursor: pointer;
+}
+.dm-sync-field-row input {
+  margin: 0;
+}

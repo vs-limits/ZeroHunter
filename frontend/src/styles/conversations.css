@@ -1,0 +1,176 @@
+.dm-conv-layout {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 1100px) {
+  .dm-conv-layout { grid-template-columns: 1fr; }
+}
+
+.dm-conv-aside {
+  background: var(--color-bg-container);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 8px 0;
+  position: sticky;
+  top: 0;
+  max-height: calc(100vh - var(--topbar-h) - 200px);
+  overflow: auto;
+}
+
+.dm-conv-agent-block + .dm-conv-agent-block {
+  border-top: 1px solid var(--color-split);
+  margin-top: 4px;
+  padding-top: 4px;
+}
+
+.dm-conv-agent-head {
+  display: flex;
+  width: 100%;
+  align-items: baseline;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  padding: 8px 14px;
+  font-size: 13px;
+  color: var(--color-text);
+  text-align: left;
+}
+.dm-conv-agent-head:hover { background: var(--color-bg-soft); }
+.dm-conv-agent-head.active {
+  background: var(--color-primary-bg);
+  color: var(--color-primary);
+  font-weight: 500;
+}
+.dm-conv-agent-zh { font-weight: 600; }
+.dm-conv-agent-en {
+  color: var(--color-text-quaternary);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.dm-conv-agent-count {
+  margin-left: auto;
+  background: var(--color-bg-soft);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-tertiary);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 0 7px;
+  border-radius: 9px;
+  height: 18px;
+  line-height: 16px;
+}
+.dm-conv-agent-head.active .dm-conv-agent-count {
+  border-color: var(--color-primary-border);
+  color: var(--color-primary);
+  background: var(--color-bg-container);
+}
+
+.dm-conv-turns {
+  list-style: none;
+  margin: 0 0 4px;
+  padding: 0;
+}
+.dm-conv-turn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 6px 14px 6px 28px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  text-align: left;
+  border-left: 2px solid transparent;
+}
+.dm-conv-turn:hover { background: var(--color-bg-soft); }
+.dm-conv-turn.active {
+  background: var(--color-bg-soft);
+  color: var(--color-text);
+  border-left-color: var(--color-primary);
+}
+.dm-conv-turn-no {
+  font-family: var(--mono);
+  color: var(--color-text-quaternary);
+  width: 36px;
+  flex-shrink: 0;
+}
+.dm-conv-turn.status-error .dm-conv-turn-no {
+  color: var(--color-error);
+}
+.dm-conv-turn-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.dm-conv-turn-status {
+  display: flex;
+  gap: 4px;
+}
+.dm-conv-turn-meta {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--color-text-quaternary);
+}
+
+/* 详情区 */
+.dm-conv-detail .dm-card { margin-bottom: 12px; }
+
+.dm-msg-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.dm-msg {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg-soft);
+  overflow: hidden;
+}
+.dm-msg-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--color-bg-container);
+  border-bottom: 1px solid var(--color-split);
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+.dm-msg-role {
+  font-family: var(--mono);
+  font-weight: 500;
+}
+.dm-msg-meta {
+  margin-left: auto;
+  color: var(--color-text-quaternary);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.dm-msg-content {
+  margin: 0;
+  padding: 12px 14px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 480px;
+  overflow: auto;
+  color: var(--color-text);
+}
+
+.dm-role-system .dm-msg-role { color: var(--color-primary); }
+.dm-role-user .dm-msg-role { color: var(--color-text-secondary); }
+.dm-role-assistant .dm-msg-role { color: var(--color-success); }
+.dm-role-tool .dm-msg-role { color: var(--color-warning); }
+.dm-role-reasoning .dm-msg-role { color: var(--color-text-tertiary); }
+.dm-role-reasoning .dm-msg-content {
+  background: #fffbeb;
+  font-style: italic;
+}
+.dm-role-error .dm-msg-role { color: var(--color-error); }

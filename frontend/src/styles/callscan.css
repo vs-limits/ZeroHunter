@@ -1,0 +1,5 @@
+/* CallScan 视图 */
+.dm-card.dm-card-callscan {
+  --card-bar: var(--t-callscan);
+  border-left: 3px solid var(--t-callscan);
+}

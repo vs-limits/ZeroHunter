@@ -1,0 +1,114 @@
+/* 二级导航：用于 SkillsView / SinksView 的子选择 */
+.dm-subnav {
+  background: var(--color-bg-container);
+  border-bottom: 1px solid var(--color-split);
+  padding: 12px 24px 0;
+  flex-shrink: 0;
+}
+.dm-subnav-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.dm-subnav-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+.dm-subnav-count {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  font-family: var(--mono);
+}
+.dm-subnav-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 6px;
+  padding: 0 0 12px;
+  max-height: 110px;
+  overflow-y: auto;
+}
+.dm-subnav-tab {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  padding: 3px 12px;
+  background: var(--color-bg-container);
+  color: var(--color-text-secondary);
+  font-size: 12.5px;
+  height: 26px;
+  transition: all 0.15s ease;
+}
+.dm-subnav-tab:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+.dm-subnav-tab.active {
+  border-color: var(--color-primary);
+  background: var(--color-primary-bg);
+  color: var(--color-primary);
+}
+.dm-subnav-tab-zh { font-weight: 500; }
+.dm-subnav-tab-en {
+  font-size: 11px;
+  color: var(--color-text-quaternary);
+  font-family: var(--mono);
+  letter-spacing: 0;
+  font-weight: 400;
+}
+.dm-subnav-tab.active .dm-subnav-tab-en {
+  color: var(--color-primary);
+  opacity: 0.7;
+}
+
+/* 卡片标题中的英文小字 */
+.dm-card-en {
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--color-text-tertiary);
+  font-weight: 400;
+  margin-left: 8px;
+  letter-spacing: 0;
+}
+
+/* 规则字段网格 */
+.dm-rule-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px 18px;
+  margin-top: 12px;
+}
+.dm-rule-field.full { grid-column: 1 / -1; }
+.dm-rule-field-body {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.dm-rule-code {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--color-bg-soft);
+  border: 1px solid var(--color-border);
+  padding: 2px 8px;
+  border-radius: 4px;
+  color: var(--color-text);
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+.dm-rule-code.dm-rule-block {
+  display: block;
+  padding: 8px 10px;
+  margin: 2px 0;
+  width: 100%;
+}
+
+.dm-rule-desc {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  line-height: 1.65;
+}
